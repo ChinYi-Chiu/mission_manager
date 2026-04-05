@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>任務核心規劃器 V6 - OAuth 雲端同步</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
+        .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.5); }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .status-tag { font-size: 10px; font-weight: 900; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; }
+        
+        /* 針對不同任務狀態的視覺效果 */
+        .task-done { color: #94a3b8; text-decoration: line-through; }
+        .task-extended { color: #ef4444; border-left: 3px solid #ef4444; padding-left: 8px; }
+        .task-ahead { color: #10b981; }
+    </style>
+</head>
+<body class="min-h-screen pb-20">
+    <!-- 全域導覽與同步狀態 -->
+    <nav class="sticky top-0 z-40 glass-card px-4 py-3 mb-6 shadow-sm flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <div id="sync-indicator" class="w-2.5 h-2.5 rounded-full bg-slate-300"></div>
+            <span id="sync-text" class="text-[11px] font-black text-slate-500 uppercase tracking-tighter">離線模式 (LocalStorage)</span>
+        </div>
+        <div id="auth-section">
+            <button id="login-btn" onclick="handleAuthClick()" class="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg shadow-indigo-100 flex items-center gap-2">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12.545 11.027L21.148 11.027C21.326 11.527 21.41 12.08 21.41 12.708C21.41 14.891 20.702 16.709 19.465 18.003C18.156 19.364 16.29 20.15 14.15 20.15C10.514 20.15 7.429 17.247 7.429 13.654C7.429 10.061 10.514 7.158 14.15 7.158C15.857 7.158 17.345 7.751 18.505 8.723L15.427 11.727C14.593 11.027 13.503 10.514 12.545 10.514C10.514 10.514 8.791 12.15 8.791 14.15C8.791 16.15 10.514 17.786 12.545 17.786C14.593 17.786 15.857 16.65 16.143 15.364L12.545 15.364L12.545 11.027Z"/></svg>
+                同步 Google 日曆
+            </button>
+        </div>
+    </nav>
+
+    <main id="app" class="max-w-4xl mx-auto px-4">
+        <!-- 標題區 -->
+        <header class="mb-10">
+            <h1 class="text-3xl font-black tracking-tighter text-slate-900">核心規劃器 V6</h1>
+            <p id="today-info" class="text-sm text-slate-400 font-bold mt-1 uppercase"></p>
+        </header>
+
+        <!-- 本週排程建議 -->
+        <section class="mb-10">
+            <h2 class="text-lg font-black mb-4 flex items-center gap-2">📅 本週排程建議 <span id="schedule-count" class="text-[10px] bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">0 任務</span></h2>
+            <div id="weekly-container" class="space-y-4"></div>
+        </section>
+
+        <!-- 目標進度看板 -->
+        <section>
+            <h2 class="text-lg font-black mb-4">🏆 目標進度看板</h2>
+            <div id="goals-grid" class="grid gap-4 sm:grid-cols-2"></div>
+            <button onclick="createNewGoal()" class="w-full mt-4 py-4 border-2 border-dashed border-slate-200 rounded-3xl text-slate-400 font-bold text-sm hover:border-indigo-300 hover:text-indigo-400 transition-all">+ 建立新的長遠目標</button>
+        </section>
+    </main>
+
+    <!-- 任務詳情與日誌 Modal -->
+    <div id="detail-modal" class="fixed inset-0 bg-slate-900/60 hidden z-50 flex items-center justify-center p-0 md:p-4">
+        <div class="bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-3xl md:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
+            <!-- Modal Header -->
+            <div class="px-6 py-5 border-b flex justify-between items-center bg-white sticky top-0 z-10">
+                <div>
+                    <h3 id="detail-title" class="text-xl font-black text-slate-900">計畫詳情</h3>
+                    <div id="detail-meta" class="flex gap-2 mt-1"></div>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="openEditGoal()" class="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl hover:bg-indigo-100 transition">編輯計畫</button>
+                    <button onclick="closeModals()" class="text-slate-300 text-4xl leading-none">&times;</button>
+                </div>
+            </div>
+            
+            <!-- Modal Body -->
+            <div class="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+                <!-- 進度概覽卡片 -->
+                <div id="detail-stats-grid" class="grid grid-cols-3 gap-4"></div>
+
+                <!-- 子任務列表 -->
+                <div>
+                    <h4 class="font-black text-slate-800 mb-4 flex items-center justify-between">任務清單 <span class="text-[10px] text-slate-400 font-medium">時數已鎖定</span></h4>
+                    <div id="detail-tasks-list" class="space-y-3"></div>
+                </div>
+
+                <!-- 詳細操作日誌 (需求 9, 10) -->
+                <div class="border-t pt-8">
+                    <h4 class="font-black text-slate-800 mb-6">操作日誌與進度追蹤</h4>
+                    <div id="detail-logs" class="space-y-6"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 核銷工時彈窗 (需求 4, 5, 6) -->
+    <div id="log-modal" class="fixed inset-0 bg-slate-900/60 hidden z-[60] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl text-center">
+            <h3 class="text-xl font-black mb-2">工時核銷</h3>
+            <p id="log-task-context" class="text-xs text-slate-400 mb-8 font-medium"></p>
+            <div class="space-y-6">
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-3">投入時數 (h)</label>
+                    <input type="number" id="log-hours-input" step="0.5" class="w-full text-center text-4xl font-black border-b-4 border-indigo-50 py-4 outline-none focus:border-indigo-500 transition-colors">
+                </div>
+                <div class="grid grid-cols-1 gap-3">
+                    <button id="log-confirm-btn" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-xl shadow-indigo-100 active:scale-95 transition">確認提交</button>
+                    <button onclick="closeModals()" class="text-slate-400 text-sm font-bold py-2">稍後再說</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Google Identity Services SDK old
+    <script src="https://accounts.google.com/gsi/client" onload="initGis()"></script>
+    <script src="https://apis.google.com/js/api.js" onload="initGapi()"></script>
+    -->
+    <!-- Google Identity Services SDK -->
+    <script src="https://accounts.google.com/gsi/client" defer"></script>
+    <script src="https://apis.google.com/js/api.js" defer"></script>
+    
+
+
+    <script>
+        /**
+         * 開發者說明：
+         * 1. 到 Google Cloud Console 建立 OAuth 2.0 Client ID (Web Application)。
+         * 2. 在 "Authorized JavaScript origins" 加入你網頁的 URL (例如 http://localhost:8080 或你的 GitHub Pages 網址)。
+         * 3. 將 Client ID 填入下方。
+         */
+        const CLIENT_ID = '687028778487-dmauf1pac18283b565fvfgg1au3kjc21.apps.googleusercontent.com'; // 👈 在此填入你的 Client ID
+        const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
+        const SCOPES = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
+
+        let tokenClient;
+        let gapiInited = false;
+        let gisInited = false;
+
+        // --- 核心狀態 ---
+        let state = {
+            goals: [],
+            dailyMaxHours: 6,
+            lastId: 0
+        };
+        let activeGoalId = null;
+
+        // --- 初始化 & OAuth 流程 ---
+        function initGapi() {
+            gapi.load('client', async () => {
+                await gapi.client.init({ discoveryDocs: [DISCOVERY_DOC] });
+                gapiInited = true;
+                maybeSync();
+            });
+        }
+
+        function initGis() {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: async (resp) => {
+                    if (resp.error !== undefined) throw (resp);
+                    updateSyncUI(true);
+                    await syncFromCalendar();
+                },
+            });
+            gisInited = true;
+        }
+
+        function maybeSync() {
+            if (gapiInited && gisInited) {
+            console.log("✅ API 全部初始化完成");
+            // 這裡可以啟用登入按鈕
+            }
+        }
+
+        function handleAuthClick() {
+            if (!CLIENT_ID) {
+                alert("請先在程式碼中設定 CLIENT_ID 才能使用雲端同步功能。");
+                return;
+            }
+            if (!tokenClient) {
+                console.error("❌ tokenClient 尚未初始化");
+                alert("系統尚未初始化完成，請稍後再試");
+                return;
+            }
+            tokenClient.requestAccessToken({ prompt: 'consent' });
+        }
+
+        function updateSyncUI(connected) {
+            const indicator = document.getElementById('sync-indicator');
+            const text = document.getElementById('sync-text');
+            const btn = document.getElementById('login-btn');
+            if (connected) {
+                indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]";
+                text.innerText = "已連線至 Google Calendar";
+                text.className = "text-[11px] font-black text-emerald-600 uppercase tracking-tighter";
+                btn.classList.add('hidden');
+            }
+        }
+
+        // --- 資料同步邏輯 (Calendar as DB) ---
+        async function syncToCalendar(goal) {
+            if (!gapi.client.calendar) return;
+            const event = {
+                'summary': `[TASK_GOAL] ${goal.title}`,
+                'description': `DATA_VERSION:V6\nPAYLOAD:${JSON.stringify(goal)}`,
+                'start': { 'date': new Date().toISOString().split('T')[0] },
+                'end': { 'date': new Date().toISOString().split('T')[0] },
+                'colorId': '1' // 藍色
+            };
+            // 實作略：呼叫 gapi.client.calendar.events.insert 或 list 進行同步
+        }
+
+        // --- 核心功能與 UI ---
+        window.onload = () => {
+            const saved = localStorage.getItem('task_planner_v6_data');
+            if (saved) state = JSON.parse(saved);
+            updateDateDisplay();
+            refreshUI();
+
+            // 等 DOM ready 後再初始化 API
+            initGapi();
+            initGis();
+        };
+
+        function persist() {
+            localStorage.setItem('task_planner_v6_data', JSON.stringify(state));
+            refreshUI();
+            if (activeGoalId) renderDetails(activeGoalId);
+        }
+
+        function refreshUI() {
+            renderGoalCards();
+            renderWeeklyPlanner();
+        }
+
+        function updateDateDisplay() {
+            document.getElementById('today-info').innerText = new Date().toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'long' });
+        }
+
+        // --- 需求 4: 核銷與狀態判斷 (A/B/C/D) ---
+        function openLogHours(taskId, title, planned) {
+            const task = findNode(taskId);
+            document.getElementById('log-task-context').innerText = `計畫: ${title} | 今日分配: ${planned}h`;
+            document.getElementById('log-hours-input').value = planned;
+            document.getElementById('log-modal').classList.remove('hidden');
+
+            document.getElementById('log-confirm-btn').onclick = () => {
+                const actual = parseFloat(document.getElementById('log-hours-input').value) || 0;
+                let logMsg = "";
+                
+                if (actual === 0) logMsg = `【逾期】今日未投入時間 (規劃為 ${planned}h)`;
+                else if (actual < planned) logMsg = `【進度落後】今日核銷 ${actual}h，不足原定規劃 ${planned}h`;
+                else if (actual === planned) logMsg = `【準時完成】今日達成規劃目標 ${actual}h`;
+                else logMsg = `【超前達成】今日超額完成 ${actual}h (原規劃 ${planned}h)`;
+
+                task.doneHours += actual;
+                if (task.doneHours >= task.targetHours) {
+                    task.doneHours = task.targetHours;
+                    task.completed = true;
+                }
+
+                addLog(activeGoalId || findParentGoal(taskId).id, logMsg);
+                closeModals();
+                persist();
+            };
+        }
+
+        // --- 需求 5: 超前完成功能 ---
+        function markEarly(taskId) {
+            const task = findNode(taskId);
+            const saved = task.targetHours - task.doneHours;
+            if (confirm(`確定超前結案「${task.title}」？\n這將標註節省了 ${saved.toFixed(1)}h 並結束此項。`)) {
+                task.isEarly = true;
+                task.earlyHours = saved.toFixed(1);
+                task.doneHours = task.targetHours;
+                task.completed = true;
+                addLog(activeGoalId, `【超前結案】手動完成「${task.title}」，標註節省 ${saved.toFixed(1)}h`);
+                persist();
+            }
+        }
+
+        // --- 需求 6: 延長工時功能 ---
+        function extendHours(taskId) {
+            const add = prompt("欲增加多少額外工時？", "1");
+            if (add && !isNaN(add)) {
+                const task = findNode(taskId);
+                const val = parseFloat(add);
+                task.targetHours += val;
+                task.isExtended = true;
+                addLog(activeGoalId, `【工時延長】因故增加「${task.title}」${val}h 工時`);
+                persist();
+            }
+        }
+
+        // --- 詳情頁面渲染 (需求 8, 10) ---
+        function openDetails(id) {
+            activeGoalId = id;
+            renderDetails(id);
+            document.getElementById('detail-modal').classList.remove('hidden');
+        }
+
+        function renderDetails(id) {
+            const g = state.goals.find(x => x.id === id);
+            const stats = getGoalStats(g);
+            const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+
+            document.getElementById('detail-title').innerText = g.title;
+            document.getElementById('detail-meta').innerHTML = `
+                <span class="status-tag bg-indigo-100 text-indigo-600">P${g.priority}</span>
+                <span class="status-tag bg-slate-100 text-slate-500">權重 ${g.weight}%</span>
+            `;
+
+            document.getElementById('detail-stats-grid').innerHTML = `
+                <div class="bg-slate-50 p-4 rounded-2xl">
+                    <p class="text-[9px] font-black text-slate-400 mb-1 uppercase">預計總時數</p>
+                    <p class="text-xl font-black text-slate-700">${stats.target.toFixed(1)}h</p>
+                </div>
+                <div class="bg-indigo-50 p-4 rounded-2xl">
+                    <p class="text-[9px] font-black text-indigo-400 mb-1 uppercase">目前進度</p>
+                    <p class="text-xl font-black text-indigo-600">${progress}%</p>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-2xl">
+                    <p class="text-[9px] font-black text-slate-400 mb-1 uppercase">剩餘時數</p>
+                    <p class="text-xl font-black text-slate-700">${(stats.target - stats.done).toFixed(1)}h</p>
+                </div>
+            `;
+
+            // 子任務列表 (需求 3, 5, 6)
+            const list = document.getElementById('detail-tasks-list');
+            list.innerHTML = '';
+            const leaves = [];
+            getAllLeaves(g, leaves);
+            leaves.forEach(t => {
+                const isDone = t.completed;
+                list.innerHTML += `
+                    <div class="p-4 rounded-2xl border border-slate-100 flex items-center justify-between ${isDone ? 'bg-slate-50' : 'bg-white'}">
+                        <div class="flex-1">
+                            <h5 class="text-sm font-bold ${isDone ? 'task-done' : (t.isExtended ? 'task-extended' : 'text-slate-800')}">${t.title}</h5>
+                            <div class="flex flex-wrap items-center gap-2 mt-2">
+                                <span class="text-[10px] font-black text-slate-400">${t.doneHours.toFixed(1)} / ${t.targetHours.toFixed(1)}h</span>
+                                ${t.isEarly ? `<span class="bg-emerald-50 text-emerald-600 status-tag">超前 ${t.earlyHours}h 完成</span>` : ''}
+                                ${t.isExtended ? `<span class="bg-red-50 text-red-500 status-tag">已延長工時</span>` : ''}
+                                ${isDone && !t.isEarly ? `<span class="bg-slate-200 text-slate-500 status-tag">已完成</span>` : ''}
+                            </div>
+                        </div>
+                        ${!isDone ? `
+                            <div class="flex gap-1">
+                                <button onclick="markEarly(${t.id})" class="p-2 hover:bg-emerald-50 text-emerald-600 rounded-lg transition" title="超前完成">✨</button>
+                                <button onclick="extendHours(${t.id})" class="p-2 hover:bg-red-50 text-red-500 rounded-lg transition" title="延長工時">➕</button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+
+            // 豐富日誌渲染 (需求 9)
+            const logContainer = document.getElementById('detail-logs');
+            logContainer.innerHTML = (g.logs || []).slice().reverse().map(l => `
+                <div class="flex gap-4">
+                    <div class="flex flex-col items-center">
+                        <div class="w-2.5 h-2.5 rounded-full bg-indigo-500 shadow-[0_0_5px_rgba(99,101,241,0.5)]"></div>
+                        <div class="w-0.5 flex-1 bg-slate-100 my-1"></div>
+                    </div>
+                    <div class="pb-6">
+                        <p class="text-xs font-bold text-slate-700 leading-relaxed">${l.msg}</p>
+                        <time class="text-[10px] text-slate-400 font-medium mt-1 block">${l.time}</time>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // --- 其他工具函式 (略，延續 V4 邏輯) ---
+        function getGoalStats(node) {
+            let target = node.targetHours || 0; let done = node.doneHours || 0;
+            if (node.children) { node.children.forEach(c => { const s = getGoalStats(c); target += s.target; done += s.done; }); }
+            return { target, done };
+        }
+        function getAllLeaves(node, result) {
+            if (!node.children || node.children.length === 0) { if (node.id !== activeGoalId) result.push(node); }
+            else { node.children.forEach(c => getAllLeaves(c, result)); }
+        }
+        function findNode(id, nodes = state.goals) {
+            for (let n of nodes) { if (n.id === id) return n; if (n.children) { const r = findNode(id, n.children); if (r) return r; } }
+            return null;
+        }
+        function findParentGoal(id) { for (let g of state.goals) { if (findNode(id, [g])) return g; } return null; }
+        function addLog(goalId, msg) {
+            const g = state.goals.find(x => x.id === goalId);
+            if (!g.logs) g.logs = [];
+            g.logs.push({ time: new Date().toLocaleString('zh-TW'), msg });
+        }
+        function closeModals() { document.querySelectorAll('[id$="-modal"]').forEach(m => m.classList.add('hidden')); document.body.style.overflow = 'auto'; }
+        
+        // --- UI 渲染 ---
+        function renderGoalCards() {
+            const grid = document.getElementById('goals-grid');
+            grid.innerHTML = '';
+            state.goals.forEach(g => {
+                const stats = getGoalStats(g);
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+                grid.innerHTML += `
+                    <div onclick="openDetails(${g.id})" class="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition group">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h4 class="font-black text-slate-800 text-lg group-hover:text-indigo-600 transition">${g.title}</h4>
+                                <div class="flex gap-2 mt-1.5">
+                                    <span class="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-100 text-slate-400">P${g.priority}</span>
+                                    <span class="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-400">${g.weight}% 權重</span>
+                                </div>
+                            </div>
+                            <span class="text-sm font-black text-indigo-600">${progress}%</span>
+                        </div>
+                        <div class="w-full bg-slate-50 h-2 rounded-full overflow-hidden">
+                            <div class="bg-indigo-500 h-full transition-all duration-700 ease-out" style="width: ${progress}%"></div>
+                        </div>
+                        <div class="mt-4 flex justify-between items-center text-[10px] font-bold text-slate-400">
+                            <span>截止: ${g.deadline || '未定'}</span>
+                            <span class="text-slate-500">已完成 ${stats.done.toFixed(1)} / ${stats.target.toFixed(1)} h</span>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        
+        // --- 排程渲染 ---
+        function renderWeeklyPlanner() {
+            const container = document.getElementById('weekly-container');
+            const sched = calculateSchedule();
+            container.innerHTML = '';
+            document.getElementById('schedule-count').innerText = `${sched.length} 任務`;
+            
+            const groups = {};
+            sched.forEach(s => { if(!groups[s.date]) groups[s.date] = []; groups[s.date].push(s); });
+            Object.keys(groups).sort().forEach(date => {
+                const isToday = date === new Date().toISOString().split('T')[0];
+                let html = `<div class="p-5 rounded-3xl border ${isToday ? 'bg-indigo-50/50 border-indigo-200' : 'bg-white border-slate-100 shadow-sm'}">
+                    <p class="text-[10px] font-black text-slate-400 mb-3 uppercase tracking-widest">${date} ${isToday ? '• TODAY' : ''}</p>
+                    <div class="space-y-3">`;
+                groups[date].forEach(t => {
+                    html += `<div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <button onclick="openLogHours(${t.taskId}, '${t.title}', ${t.hours})" class="w-6 h-6 rounded-lg border-2 border-slate-200 bg-white hover:border-indigo-500 transition"></button>
+                            <span class="text-sm font-bold text-slate-700">${t.title}</span>
+                        </div>
+                        <span class="text-xs font-black text-slate-400 tabular-nums">${t.hours}h</span>
+                    </div>`;
+                });
+                html += `</div></div>`;
+                container.innerHTML += html;
+            });
+        }
+
+        // --- 簡易排程邏輯 ---
+        function calculateSchedule() {
+            const today = new Date(); today.setHours(0,0,0,0);
+            let pool = [];
+            state.goals.forEach(g => collectActiveLeaves(g, g.title, g.priority, g.weight, pool));
+            const schedule = [];
+            let cursor = new Date(today);
+            for (let i = 0; i < 7; i++) {
+                const dStr = cursor.toISOString().split('T')[0];
+                let dayRem = state.dailyMaxHours;
+                const active = pool.filter(t => (t.targetHours - t.doneHours) > 0);
+                if (active.length === 0) break;
+                const maxP = Math.max(...active.map(t => t.priority));
+                const topP = active.filter(t => t.priority === maxP);
+                topP.forEach(task => {
+                    let work = Math.min(task.targetHours - task.doneHours, dayRem / topP.length, dayRem);
+                    if (work > 0) {
+                        schedule.push({ date: dStr, taskId: task.id, title: task.title, hours: parseFloat(work.toFixed(1)) });
+                        task.doneHours += work; dayRem -= work;
+                    }
+                });
+                cursor.setDate(cursor.getDate() + 1);
+            }
+            return schedule;
+        }
+        function collectActiveLeaves(node, pName, priority, weight, result) {
+            if (node.completed) return;
+            if (!node.children || node.children.length === 0) { if (node.targetHours > node.doneHours) result.push({ ...node, parent: pName, priority, weight }); }
+            else { node.children.forEach(c => collectActiveLeaves(c, pName, priority, weight, result)); }
+        }
+
+        function createNewGoal() {
+            const id = ++state.lastId;
+            state.goals.push({ id, title: "新專案目標", priority: 5, weight: 20, targetHours: 0, doneHours: 0, completed: false, children: [], logs: [] });
+            openDetails(id);
+        }
+    </script>
+</body>
+</html>
