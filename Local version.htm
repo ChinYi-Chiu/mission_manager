@@ -72,8 +72,8 @@
                     <div class="flex items-center justify-between mb-3">
                         <h4 class="font-bold text-slate-800">子任務執行狀態</h4>
                         <div class="flex items-center gap-2 text-[10px] text-slate-400">
-                            <span>樹狀圖縮放</span>
-                            <input id="detail-tree-scale" type="range" min="0.8" max="1.4" step="0.1" value="1" onchange="updateDetailTreeScale(this.value)" class="h-1 w-24 rounded-full bg-slate-200">
+                            <span>樹狀圖縮放(開發中)</span>
+                            <input disabled id="detail-tree-scale" type="range" min="0.8" max="1.4" step="0.1" value="1" onchange="updateDetailTreeScale(this.value)" class="h-1 w-24 rounded-full bg-slate-200">
                         </div>
                     </div>
                     <div id="detail-task-tree-wrapper" class="overflow-x-auto">
@@ -282,8 +282,7 @@
                 if (state.offDays.includes(dStr)) continue;
 
                 const isToday = (dStr === todayStr);
-                let dayRem = isToday && state.todayAvailableHours !== state.dailyMaxHours ? availableToday : state.dailyMaxHours;
-                if (dayRem <= 0) continue;
+                let dayRem = isToday ? availableToday : state.dailyMaxHours;
 
                 const active = simulated.filter(t => t.remaining > 0);
                 if (active.length === 0) break;
@@ -291,6 +290,20 @@
                 const maxP = Math.max(...active.map(t => t.priority));
                 const topP = active.filter(t => t.priority === maxP);
                 const totalW = topP.reduce((s, t) => s + t.weight, 0);
+
+                if (isToday && dayRem <= 0) {
+                    topP.forEach(task => {
+                        schedule.push({
+                            date: dStr,
+                            taskId: task.id,
+                            title: task.title,
+                            parent: task.parent,
+                            hours: 0,
+                            verifiedDate: task.lastVerifiedDate || null
+                        });
+                    });
+                    continue;
+                }
 
                 topP.forEach(task => {
                     const shareBase = isToday ? dayRem : state.dailyMaxHours;
@@ -797,7 +810,6 @@
                 id, title: "新子任務", targetHours: 1, doneHours: 0,
                 completed: false, children: [], isExtended: false, isEarly: false, earlyHours: 0, isLive: true
             });
-            addLog(activeGoalId, `新增子任務「新子任務」，原始預計 1h`);
             renderTree();
         }
 
@@ -813,7 +825,6 @@
                     id, title: "新子任務", targetHours: 1, doneHours: 0,
                     completed: false, children: [], isExtended: false, isEarly: false, earlyHours: 0, isLive: true
                 });
-                addLog(activeGoalId, `新增子任務「新子任務」，原始預計 1h`);
                 renderTree();
             }
         }
@@ -843,10 +854,25 @@
             g.priority = Math.min(5, Math.max(1, priority));
             g.weight = parseInt(document.getElementById('edit-goal-weight').value);
             g.deadline = document.getElementById('edit-goal-deadline').value;
+            const createdNodes = [];
+            collectLiveNodes(g, createdNodes);
+            createdNodes.forEach(node => {
+                if (node.children && node.children.length > 0) {
+                    addLog(activeGoalId, `新增結點「${node.title}」`);
+                } else {
+                    addLog(activeGoalId, `新增子任務「${node.title}」，原始預計 ${node.targetHours || 0}h`);
+                }
+            });
             markAllNodesDead(g);
             isNewGoalEdit = false;
             closeModals();
             persist();
+        }
+
+        function collectLiveNodes(node, result) {
+            if (!node) return;
+            if (node.isLive) result.push(node);
+            if (node.children) node.children.forEach(c => collectLiveNodes(c, result));
         }
 
         function markAllNodesDead(node) {
