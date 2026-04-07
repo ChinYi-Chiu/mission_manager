@@ -42,7 +42,7 @@
                 </h2>
                 <div id="today-budget-ui" class="text-[11px] font-bold text-slate-400"></div>
             </div>
-            <div id="weekly-container" class="space-y-4"></div>
+            <div id="weekly-container" class="grid grid-cols-1 gap-4 md:grid-cols-7"></div>
         </section>
 
         <!-- 目標進度看板 -->
@@ -69,11 +69,16 @@
             <div class="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
                 <div id="detail-stats-grid" class="grid grid-cols-3 gap-4"></div>
                 <div>
-                    <h4 class="font-bold text-slate-800 mb-4 flex items-center justify-between">
-                        子任務執行狀態
-                        <span class="text-[10px] text-slate-400 font-medium">時數調整只能「超前完成」或是「延長工時」</span>
-                    </h4>
-                    <div id="detail-tasks-list" class="space-y-3"></div>
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="font-bold text-slate-800">子任務執行狀態</h4>
+                        <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                            <span>樹狀圖縮放</span>
+                            <input id="detail-tree-scale" type="range" min="0.8" max="1.4" step="0.1" value="1" onchange="updateDetailTreeScale(this.value)" class="h-1 w-24 rounded-full bg-slate-200">
+                        </div>
+                    </div>
+                    <div id="detail-task-tree-wrapper" class="overflow-x-auto">
+                        <div id="detail-task-tree" class="space-y-3" style="font-size:1rem;"></div>
+                    </div>
                 </div>
                 <div class="border-t pt-6">
                     <h4 class="font-bold text-slate-800 mb-4">操作日誌 (Activity Logs)</h4>
@@ -95,7 +100,7 @@
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">優先級 (數字越大越重要)</label>
-                        <input type="number" id="edit-goal-priority" class="w-full bg-slate-50 p-3 rounded-xl mt-1 outline-none">
+                        <input type="number" id="edit-goal-priority" min="1" max="5" class="w-full bg-slate-50 p-3 rounded-xl mt-1 outline-none">
                     </div>
                     <div>
                         <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">權重 (%)</label>
@@ -108,10 +113,10 @@
                 </div>
                 <div class="pt-4 border-t">
                     <div class="flex justify-between items-center mb-3">
-                        <span class="text-xs font-bold text-slate-400">管理子任務項目</span>
-                        <button onclick="addNewSubTask(activeGoalId)" class="text-indigo-600 text-xs font-bold bg-indigo-50 px-2 py-1 rounded-lg">+ 新增子任務</button>
+                        <span class="text-xs font-bold text-slate-400">管理任務樹</span>
+                        <button onclick="addRootTask()" class="text-indigo-600 text-xs font-bold bg-indigo-50 px-2 py-1 rounded-lg">+ 新增子任務</button>
                     </div>
-                    <div id="edit-subtasks-list" class="space-y-2 max-h-40 overflow-y-auto custom-scrollbar pr-2"></div>
+                    <div id="tree-root" class="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-2"></div>
                 </div>
                 <div class="flex gap-3 pt-4">
                     <button onclick="deleteActiveGoal()" class="text-red-400 font-bold px-4 hover:text-red-600">刪除目標</button>
@@ -174,6 +179,29 @@
         </div>
     </div>
 
+    <!-- 手動核銷 Modal -->
+    <div id="manual-log-modal" class="fixed inset-0 bg-slate-900/60 hidden z-[75] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl modal-animate-in text-center">
+            <h3 class="text-lg font-bold mb-1">手動核銷任務</h3>
+            <div class="space-y-5 text-left">
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">選擇計畫</label>
+                    <select id="manual-goal-select" onchange="renderManualTaskOptions()" class="w-full bg-slate-50 p-3 rounded-2xl outline-none"></select>
+                </div>
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">選擇末端子任務</label>
+                    <select id="manual-task-select" class="w-full bg-slate-50 p-3 rounded-2xl outline-none"></select>
+                </div>
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">本次完成時數 (h)</label>
+                    <input type="number" id="manual-log-hours" step="0.5" class="w-full bg-slate-50 p-3 rounded-2xl text-center font-black outline-none" value="1">
+                </div>
+                <button onclick="confirmManualVerification()" class="w-full bg-green-500 text-white py-4 rounded-2xl font-bold shadow-xl shadow-green-100">確認核銷</button>
+                <button onclick="closeModals()" class="text-slate-400 text-sm font-bold">取消</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // --- 核心狀態 ---
         let state = {
@@ -186,6 +214,8 @@
             lastId: 0
         };
         let activeGoalId = null;
+        let isNewGoalEdit = false;
+        let detailTreeScale = 1;
 
         // --- 初始化 & 存取 ---
         window.onload = () => {
@@ -245,8 +275,8 @@
             const schedule = [];
             let cursorDate = new Date(); // 使用本地時間進行模擬，但日期判定依賴 ISO String
             
-            // 規劃未來 14 天
-            for (let i = 0; i < 14; i++) {
+            // 規劃未來 7 天
+            for (let i = 0; i < 7; i++) {
                 const dStr = getOffsetDateString(i);
                 if (state.offDays.includes(dStr)) continue;
 
@@ -337,57 +367,69 @@
             const container = document.getElementById('weekly-container');
             const sched = calculateSchedule();
             container.innerHTML = '';
-            if (sched.length === 0) {
-                container.innerHTML = `<div class="p-12 text-center text-slate-300 border-2 border-dashed rounded-3xl font-medium">目前沒有排定任務，請至下方建立目標與子任務。</div>`;
-                return;
-            }
+            container.className = 'flex flex-col gap-4';
 
-            const groups = {};
-            sched.forEach(s => { if(!groups[s.date]) groups[s.date] = []; groups[s.date].push(s); });
+            const tasksByDate = {};
+            sched.forEach(s => { if (!tasksByDate[s.date]) tasksByDate[s.date] = []; tasksByDate[s.date].push(s); });
 
             const todayStr = getTodayString();
+            const dayLabels = ['日','一','二','三','四','五','六'];
 
-            Object.keys(groups).sort().forEach(date => {
+            for (let i = 0; i < 7; i++) {
+                const date = getOffsetDateString(i);
+                const tasks = tasksByDate[date] || [];
                 const isToday = date === todayStr;
-                const dParts = date.split('-');
-                const d = new Date(dParts[0], dParts[1]-1, dParts[2]);
+                const isOff = state.offDays.includes(date);
+                const d = parseDateString(date);
+                const dayName = dayLabels[d.getDay()];
+
                 let html = `
-                    <div class="p-5 rounded-3xl border ${isToday ? 'bg-indigo-50/50 border-indigo-100 ring-1 ring-indigo-500/10' : 'bg-white border-slate-100 shadow-sm'}">
-                        <div class="flex justify-between items-center mb-4">
-                            <span class="text-xs font-black uppercase tracking-widest ${isToday ? 'text-indigo-600' : 'text-slate-400'}">
-                                ${date} ${isToday ? '• 今天' : ''}
-                            </span>
-                            <span class="text-[10px] font-bold text-slate-400">當日分配: ${groups[date].reduce((s,t)=>s+t.hours,0).toFixed(1)}h</span>
+                    <div class="p-4 rounded-3xl border ${isToday ? 'bg-indigo-50/50 border-indigo-100 ring-1 ring-indigo-500/10' : 'bg-white border-slate-100 shadow-sm'}">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <p class="text-xs font-black uppercase tracking-widest ${isToday ? 'text-indigo-600' : 'text-slate-400'}">${dayName} ${date}</p>
+                                ${isToday ? '<p class="text-[10px] text-indigo-500 font-bold">• 今天</p>' : ''}
+                            </div>
+                            <p class="text-[10px] font-bold text-slate-400">${tasks.reduce((sum, t) => sum + t.hours, 0).toFixed(1)}h</p>
                         </div>
+                        ${isOff ? '<div class="rounded-2xl bg-slate-50 p-3 text-[10px] text-slate-500 font-bold">休息日</div>' : ''}
                         <div class="space-y-3">
                 `;
-                groups[date].forEach(t => {
-                    const isVerified = isToday && t.verifiedDate === date;
-                    const isClickable = isToday && !isVerified;
-                    const btnClasses = isClickable ? 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-white flex items-center justify-center hover:border-indigo-500 transition-colors' : 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-slate-100 text-slate-400 flex items-center justify-center cursor-not-allowed';
-                    const btnProps = isClickable ? `onclick="openLogHours(${t.taskId}, '${t.title}', ${t.hours})"` : 'disabled';
 
+                if (tasks.length === 0) {
                     html += `
-                        <div class="flex items-center justify-between group/item">
-                            <div class="flex items-center gap-3">
-                                <span style="display:${isVerified ? 'block' : 'none'}" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-500 text-white">${isVerified ? '已核銷' : ''}</span>
-                                <div>
-                                    <p class="text-sm font-bold text-slate-700">${t.title}</p>
-                                    <p class="text-[9px] text-slate-400 font-medium">${t.parent}</p>
+                        <div class="rounded-2xl bg-slate-50 p-3 text-[10px] text-slate-500">尚無排程</div>
+                    `;
+                } else {
+                    tasks.forEach(t => {
+                        const isVerified = isToday && t.verifiedDate === date;
+                        const isClickable = isToday && !isVerified;
+                        const btnClasses = isClickable ? 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-white flex items-center justify-center hover:border-indigo-500 transition-colors' : 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-slate-100 text-slate-400 flex items-center justify-center cursor-not-allowed';
+                        const btnProps = isClickable ? `onclick="openLogHours(${t.taskId}, '${t.title}', ${t.hours})"` : 'disabled';
+
+                        html += `
+                            <div class="flex items-center justify-between gap-3 p-3 bg-white border border-slate-100 rounded-3xl">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span style="display:${isVerified ? 'block' : 'none'}" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-500 text-white">${isVerified ? '已核銷' : ''}</span>
+                                    </div>
+                                    <p class="text-sm font-bold text-slate-700 truncate">${t.title}</p>
+                                    <p class="text-[9px] text-slate-400 truncate">${t.parent}</p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-black ${t.hours === 0 && isToday ? 'text-red-400' : 'text-slate-500'} tabular-nums">${t.hours}h</span>
+                                    <button ${btnProps} class="${btnClasses}">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-slate-100"></div>
+                                    </button>
                                 </div>
                             </div>
-                            <div class="flex items-center gap-3">
-                                <span class="text-xs font-black ${t.hours === 0 && isToday ? 'text-red-400' : 'text-slate-500'} tabular-nums">${t.hours}h</span>
-                                <button ${btnProps} class="${btnClasses}">
-                                    <div class="w-1.5 h-1.5 rounded-full bg-slate-100"></div>
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                });
+                        `;
+                    });
+                }
+
                 html += `</div></div>`;
                 container.innerHTML += html;
-            });
+            }
         }
 
         // --- 詳情視窗功能 ---
@@ -421,36 +463,9 @@
                 </div>
             `;
 
-            const list = document.getElementById('detail-tasks-list');
-            list.innerHTML = '';
-            const leaves = [];
-            getAllLeaves(g, leaves);
-
-            leaves.forEach(t => {
-                const isDone = t.completed;
-                let statusTags = '';
-                if (isDone) statusTags += `<span class="bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">已完成</span>`;
-                if (t.isExtended) statusTags += `<span class="bg-red-50 text-red-500 px-1.5 py-0.5 rounded ml-1">已延長工時</span>`;
-                if (t.isEarly) statusTags += `<span class="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded ml-1">超前 ${t.earlyHours}h 完成</span>`;
-
-                list.innerHTML += `
-                    <div class="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between ${isDone ? 'opacity-60' : ''}">
-                        <div class="flex-1">
-                            <p class="text-sm font-bold ${isDone ? 'status-completed line-through' : (t.isExtended ? 'text-red-500' : 'text-slate-700')}">${t.title}</p>
-                            <div class="flex flex-wrap items-center gap-1 mt-1.5 text-[9px] font-black uppercase">
-                                <span class="text-slate-400">進度: ${t.doneHours.toFixed(1)} / ${t.targetHours.toFixed(1)} h</span>
-                                ${statusTags}
-                            </div>
-                        </div>
-                        <div class="flex gap-2">
-                            ${!isDone ? `
-                                <button onclick="markEarly(${t.id})" class="text-emerald-600 bg-emerald-50 text-[10px] font-bold px-3 py-1.5 rounded-xl hover:bg-emerald-100 transition">超前完成</button>
-                                <button onclick="extendHours(${t.id})" class="text-red-500 bg-red-50 text-[10px] font-bold px-3 py-1.5 rounded-xl hover:bg-red-100 transition">延長工時</button>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            });
+            document.getElementById('detail-tree-scale').value = detailTreeScale;
+            updateDetailTreeScale(detailTreeScale);
+            renderDetailTaskTree(g);
 
             const logsDiv = document.getElementById('detail-logs');
             logsDiv.innerHTML = (g.logs || []).slice().reverse().map(l => `
@@ -467,6 +482,140 @@
         }
 
         // --- 工時核銷功能 (引入 Available Hours 扣除) ---
+        function parseDateString(date) {
+            const [year, month, day] = date.split('-');
+            return new Date(parseInt(year), parseInt(month, 10) - 1, parseInt(day, 10));
+        }
+
+        function updateDetailTreeScale(value) {
+            detailTreeScale = parseFloat(value) || 1;
+            const tree = document.getElementById('detail-task-tree');
+            if (tree) tree.style.fontSize = detailTreeScale + 'rem';
+        }
+
+        function renderDetailTaskTree(goal) {
+            const container = document.getElementById('detail-task-tree');
+            if (!container) return;
+            container.innerHTML = generateDetailTreeHTML(goal.children || [], 0);
+        }
+
+        function generateDetailTreeHTML(nodes, depth) {
+            return nodes.map(node => {
+                const stats = getGoalStats(node);
+                const isLeaf = !node.children || node.children.length === 0;
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+                const isDone = node.completed;
+                let statusTags = '';
+                if (node.completed) statusTags += `<span class="bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">已完成</span>`;
+                if (node.isExtended) statusTags += `<span class="bg-red-50 text-red-500 px-1.5 py-0.5 rounded ml-1">已延長工時</span>`;
+                if (node.isEarly) statusTags += `<span class="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded ml-1">超前 ${node.earlyHours}h</span>`;
+
+                return `
+                    <div class="pl-${depth * 4} border-l-2 border-slate-100">
+                        <div class="p-4 bg-white rounded-3xl shadow-sm ${node.completed ? 'opacity-70' : ''}">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-700'}">${node.title}</p>
+                                    <div class="flex flex-wrap items-center gap-2 mt-2 text-[10px] text-slate-500">
+                                        <span>${stats.done.toFixed(1)} / ${stats.target.toFixed(1)} h</span>
+                                        <span>${progress}%</span>
+                                        ${isLeaf ? '<span class="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">末端</span>' : '<span class="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">父節點</span>'}
+                                        ${statusTags}
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    ${!isDone&&isLeaf ? `
+                                        <button onclick="markEarly(${node.id})" class="text-emerald-600 bg-emerald-50 text-[10px] font-bold px-3 py-1.5 rounded-xl hover:bg-emerald-100 transition">超前完成</button>
+                                        <button onclick="extendHours(${node.id})" class="text-red-500 bg-red-50 text-[10px] font-bold px-3 py-1.5 rounded-xl hover:bg-red-100 transition">延長工時</button>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        </div>
+                        ${node.children ? generateDetailTreeHTML(node.children, depth + 1) : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function manualTaskVerification() {
+            if (!state.goals || state.goals.length === 0) {
+                alert('請先建立計畫後再進行手動核銷。');
+                return;
+            }
+            renderManualGoalOptions();
+            document.getElementById('manual-log-modal').classList.remove('hidden');
+        }
+
+        function renderManualGoalOptions() {
+            const select = document.getElementById('manual-goal-select');
+            select.innerHTML = state.goals.map(g => `<option value="${g.id}">${g.title}</option>`).join('');
+            if (state.goals.length > 0) select.value = state.goals[0].id;
+            renderManualTaskOptions();
+        }
+
+        function renderManualTaskOptions() {
+            const goalId = parseInt(document.getElementById('manual-goal-select').value, 10);
+            const goal = state.goals.find(g => g.id === goalId);
+            const taskSelect = document.getElementById('manual-task-select');
+            taskSelect.innerHTML = '';
+            if (!goal) {
+                taskSelect.innerHTML = `<option value="">尚未選擇計畫</option>`;
+                taskSelect.disabled = true;
+                return;
+            }
+            const leaves = [];
+            collectLeafNodes(goal, leaves);
+            if (leaves.length === 0) {
+                taskSelect.innerHTML = `<option value="">此計畫尚無末端子任務</option>`;
+                taskSelect.disabled = true;
+                return;
+            }
+            taskSelect.disabled = false;
+            taskSelect.innerHTML = leaves.map(t => `<option value="${t.id}">${t.title} (${t.targetHours.toFixed(1)}h)</option>`).join('');
+        }
+
+        function confirmManualVerification() {
+            const taskId = parseInt(document.getElementById('manual-task-select').value, 10);
+            const hours = parseFloat(document.getElementById('manual-log-hours').value) || 0;
+            if (!taskId) {
+                alert('請選擇末端子任務。');
+                return;
+            }
+            const task = findNode(taskId);
+            const parentGoal = findParentGoal(taskId);
+            if (!task || !parentGoal) {
+                alert('任務選擇錯誤，請重新選擇。');
+                return;
+            }
+            let logMsg = `手動核銷任務「${task.title}」：`;
+            if (hours === 0) {
+                logMsg += `今日逾期 (未核銷時數)`;
+            } else {
+                logMsg += `核銷 ${hours}h`;
+            }
+            task.doneHours += hours;
+            if (task.doneHours >= task.targetHours) {
+                task.doneHours = task.targetHours;
+                task.completed = true;
+                logMsg += ' ➔ 任務正式結案';
+                const parentNode = findParentNode(taskId);
+                if (parentNode) checkAndMarkParentCompleted(parentNode);
+            }
+            state.todayAvailableHours -= hours;
+            task.lastVerifiedDate = getTodayString();
+            addLog(parentGoal.id, logMsg);
+            closeModals();
+            persist();
+        }
+
+        function collectLeafNodes(node, result) {
+            if (!node.children || node.children.length === 0) {
+                result.push(node);
+                return;
+            }
+            node.children.forEach(c => collectLeafNodes(c, result));
+        }
+
         function openLogHours(taskId, title, suggested) {
             const task = findNode(taskId);
             const parentGoal = findParentGoal(taskId);
@@ -497,6 +646,8 @@
                     task.doneHours = task.targetHours;
                     task.completed = true;
                     logMsg += " ➔ 任務正式結案";
+                    const parentNode = findParentNode(taskId);
+                    if (parentNode) checkAndMarkParentCompleted(parentNode);
                 }
 
                 // 核心改動：扣除今日可用額度 (允許變為負值)
@@ -518,6 +669,8 @@
                 task.doneHours = task.targetHours;
                 task.completed = true;
                 addLog(activeGoalId, `超前完成「${task.title}」，縮短工時 ${rem.toFixed(1)}h 並結案`);
+                const parentNode = findParentNode(taskId);
+                if (parentNode) checkAndMarkParentCompleted(parentNode);
                 persist();
             }
         }
@@ -542,50 +695,99 @@
                 deadline: new Date(Date.now() + 86400000*30).toISOString().split('T')[0],
                 targetHours: 0, doneHours: 0, completed: false, children: [], logs: []
             });
-            openEditGoal(id);
+            openEditGoal(id, true);
         }
 
-        function openEditGoal(id) {
+        function openEditGoal(id, isNew = false) {
             activeGoalId = id;
+            isNewGoalEdit = isNew;
             const g = state.goals.find(x => x.id === id);
             document.getElementById('edit-goal-title').value = g.title;
             document.getElementById('edit-goal-priority').value = g.priority;
             document.getElementById('edit-goal-weight').value = g.weight;
             document.getElementById('edit-goal-deadline').value = g.deadline;
-            renderEditSubTasks();
+            renderTree();
             document.getElementById('edit-modal').classList.remove('hidden');
         }
 
-        function renderEditSubTasks() {
-            const g = state.goals.find(x => x.id === activeGoalId);
-            const container = document.getElementById('edit-subtasks-list');
-            container.innerHTML = g.children.map(c => `
-                <div class="flex items-center gap-2 bg-slate-50 p-2 rounded-xl">
-                    <input type="text" value="${c.title}" onchange="updateSubTitle(${c.id}, this.value)" class="flex-1 bg-transparent text-sm font-bold outline-none">
-                    <span class="text-[10px] font-black text-slate-400 bg-white px-2 py-1 rounded-lg">${c.targetHours}h</span>
-                    <button onclick="deleteSubTask(${c.id})" class="text-slate-300 hover:text-red-500 font-bold px-2">×</button>
-                </div>
-            `).join('');
+        function renderTree() {
+            const goal = state.goals.find(g => g.id === activeGoalId);
+            const container = document.getElementById('tree-root');
+            if (!goal) return;
+            container.innerHTML = generateTreeHTML(goal.children || [], 0);
         }
 
-        function addNewSubTask(pid) {
-            const h = prompt("預設執行總時數 (一旦建立不可直接修改):", "2");
-            if (h && !isNaN(h)) {
-                const parent = findNode(pid);
+        function generateTreeHTML(nodes, depth) {
+            return nodes.map(node => {
+                const isLeaf = !node.children || node.children.length === 0;
+                const showAdd = (node.children && node.children.length > 0) || isNewGoalEdit;
+                const editableHours = isNewGoalEdit;
+                return `
+                <div class="ml-${depth * 4} border-l-2 border-slate-100 pl-4 py-2 my-1">
+                    <div class="flex items-center gap-2 group">
+                        <input type="text" value="${node.title}" onchange="updateNodeTitle(${node.id}, this.value)" class="flex-1 bg-transparent text-sm font-medium outline-none border-b border-transparent focus:border-indigo-300">
+                        ${isLeaf ? (editableHours ? `<input type="number" value="${node.targetHours || 0}" onchange="updateNodeHours(${node.id}, this.value)" class="w-12 text-[10px] text-slate-500 font-bold bg-slate-50 px-2 py-1 rounded-lg outline-none focus:bg-white focus:ring-1 ring-indigo-300" step="0.5">` : `<span class="text-[10px] text-slate-500 font-bold bg-slate-50 px-2 py-1 rounded-lg">${node.targetHours || 0}h</span>`) : ''}
+                        ${showAdd ? `<button onclick="addChildNode(${node.id})" class="text-slate-300 hover:text-indigo-500 text-lg font-bold px-1">+</button>` : ''}
+                        <button onclick="deleteNode(${node.id})" class="text-slate-300 hover:text-red-500 text-lg font-bold px-1">×</button>
+                    </div>
+                    ${node.children ? generateTreeHTML(node.children, depth + 1) : ''}
+                </div>
+            `;
+            }).join('');
+        }
+
+        function addRootTask() {
+            const g = state.goals.find(x => x.id === activeGoalId);
+            if (!g) return;
+            const id = ++state.lastId;
+            g.children.push({
+                id, title: "新子任務", targetHours: 1, doneHours: 0,
+                completed: false, children: [], isExtended: false, isEarly: false, earlyHours: 0
+            });
+            addLog(activeGoalId, `新增子任務「新子任務」，原始預計 1h`);
+            renderTree();
+        }
+
+        function updateNodeTitle(id, val) { const n = findNode(id); if (n) n.title = val; }
+
+        function updateNodeHours(id, val) { const n = findNode(id); if (n) n.targetHours = parseFloat(val) || 0; }
+
+        function addChildNode(parentId) {
+            const parent = findNode(parentId);
+            if (parent) {
                 const id = ++state.lastId;
                 parent.children.push({
-                    id, title: "新子任務", targetHours: parseFloat(h), doneHours: 0,
+                    id, title: "新子任務", targetHours: 1, doneHours: 0,
                     completed: false, children: [], isExtended: false, isEarly: false, earlyHours: 0
                 });
-                addLog(activeGoalId, `新增子任務「新子任務」，原始預計 ${h}h`);
-                renderEditSubTasks();
+                addLog(activeGoalId, `新增子任務「新子任務」，原始預計 1h`);
+                renderTree();
             }
+        }
+
+        function deleteNode(id) {
+            let deletedTitle = null;
+            const remove = (list) => {
+                const idx = list.findIndex(n => n.id === id);
+                if (idx > -1) {
+                    deletedTitle = list[idx].title;
+                    list.splice(idx, 1);
+                    return true;
+                }
+                for (let n of list) if (n.children && remove(n.children)) return true;
+                return false;
+            };
+            remove(state.goals);
+            if (deletedTitle) addLog(activeGoalId, `刪除子任務「${deletedTitle}」`);
+            renderTree();
         }
 
         function saveActiveGoal() {
             const g = state.goals.find(x => x.id === activeGoalId);
             g.title = document.getElementById('edit-goal-title').value;
-            g.priority = parseInt(document.getElementById('edit-goal-priority').value);
+            let priority = parseInt(document.getElementById('edit-goal-priority').value);
+            if (isNaN(priority)) priority = 1;
+            g.priority = Math.min(5, Math.max(1, priority));
             g.weight = parseInt(document.getElementById('edit-goal-weight').value);
             g.deadline = document.getElementById('edit-goal-deadline').value;
             closeModals();
@@ -594,16 +796,20 @@
 
         // --- 核心工具 ---
         function getGoalStats(node) {
-            let target = node.targetHours || 0;
-            let done = node.doneHours || 0;
-            if (node.children) {
+            if (!node.children || node.children.length === 0) {
+                // 葉子節點，使用自己的時間
+                return { target: node.targetHours || 0, done: node.doneHours || 0 };
+            } else {
+                // 父節點，只累加子節點的統計，忽略自己的 targetHours 和 doneHours
+                let target = 0;
+                let done = 0;
                 node.children.forEach(c => {
                     const s = getGoalStats(c);
                     target += s.target;
                     done += s.done;
                 });
+                return { target, done };
             }
-            return { target, done };
         }
 
         function getAllLeaves(node, result) {
@@ -627,6 +833,35 @@
             return null;
         }
 
+        function findParentNode(id) {
+            for (let g of state.goals) {
+                const result = findParentNodeInTree(id, g.children);
+                if (result) return result;
+            }
+            return null;
+        }
+
+        function findParentNodeInTree(id, nodes) {
+            for (let n of nodes) {
+                if (n.children) {
+                    if (n.children.some(c => c.id === id)) return n;
+                    const result = findParentNodeInTree(id, n.children);
+                    if (result) return result;
+                }
+            }
+            return null;
+        }
+
+        function checkAndMarkParentCompleted(node) {
+            if (!node || !node.children || node.children.length === 0) return;
+            const allCompleted = node.children.every(c => c.completed);
+            if (allCompleted && !node.completed) {
+                node.completed = true;
+                const parent = findParentNode(node.id);
+                if (parent) checkAndMarkParentCompleted(parent);
+            }
+        }
+
         function addLog(goalId, msg) {
             const g = state.goals.find(x => x.id === goalId);
             if (!g) return;
@@ -637,12 +872,6 @@
             });
         }
 
-        function updateSubTitle(id, val) { const n = findNode(id); if (n) n.title = val; }
-        function deleteSubTask(id) {
-            const g = state.goals.find(x => x.id === activeGoalId);
-            g.children = g.children.filter(c => c.id !== id);
-            renderEditSubTasks();
-        }
         function deleteActiveGoal() {
             if (confirm("確定刪除此計畫及其所有紀錄？")) {
                 state.goals = state.goals.filter(x => x.id !== activeGoalId);
