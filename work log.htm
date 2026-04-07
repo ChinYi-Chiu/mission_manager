@@ -48,12 +48,14 @@
             const [isModalOpen, setIsModalOpen] = useState(false);
             const [editingTask, setEditingTask] = useState(null);
             const [newTask, setNewTask] = useState({
-                name: '', content: '', startDate: new Date().toISOString().split('T')[0],
+                name: '', content: '', startDate: '',
                 deadline: '', priority: '普通', progress: 0
             });
 
             const [todayReport, setTodayReport] = useState('');
             const [todayNote, setTodayNote] = useState('');
+            const [timezone, setTimezone] = useState(() => localStorage.getItem('worklog_timezone') || 'UTC+8');
+            const [detailTask, setDetailTask] = useState(null);
             const fileInputRef = useRef(null);
 
             const priorities = {
@@ -63,9 +65,60 @@
                 '長期': { level: 1, color: 'text-gray-600', bg: 'bg-gray-100' }
             };
 
+            const timezoneOptions = [
+                'UTC-12','UTC-11','UTC-10','UTC-9','UTC-8','UTC-7','UTC-6','UTC-5','UTC-4','UTC-3','UTC-2','UTC-1',
+                'UTC+0','UTC+1','UTC+2','UTC+3','UTC+4','UTC+5','UTC+6','UTC+7','UTC+8','UTC+9','UTC+10','UTC+11','UTC+12'
+            ];
+
             useEffect(() => { localStorage.setItem('worklog_tasks', JSON.stringify(tasks)); }, [tasks]);
             useEffect(() => { localStorage.setItem('worklog_dailylogs', JSON.stringify(dailyLogs)); }, [dailyLogs]);
+            useEffect(() => { localStorage.setItem('worklog_timezone', timezone); }, [timezone]);
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [isModalOpen, tasks, dailyLogs, editingTask]);
+
+            const parseTimezoneOffset = (tz) => {
+                const match = tz.match(/UTC([+-])(\d{1,2})/);
+                if (!match) return 8;
+                const value = Number(match[2]);
+                return match[1] === '+' ? value : -value;
+            };
+
+            const getZoneDateString = (date = new Date()) => {
+                const offset = parseTimezoneOffset(timezone);
+                const utcMs = date.getTime();
+                const zoneMs = utcMs + offset * 3600000;
+                return new Date(zoneMs).toISOString().split('T')[0];
+            };
+
+            const getTodayString = () => getZoneDateString();
+
+            const getLatestCompletionDate = (task) => {
+                if (!task.history || task.history.length === 0) return null;
+                return [...task.history]
+                    .filter(h => h.progress === 100)
+                    .map(h => h.date)
+                    .sort()
+                    .pop() || null;
+            };
+
+            useEffect(() => {
+                const today = getTodayString();
+                if (dailyLogs[today]) {
+                    setTodayReport(dailyLogs[today].report || '');
+                    setTodayNote(dailyLogs[today].note || '');
+                }
+            }, [dailyLogs, timezone]);
+
+            useEffect(() => {
+                const today = getTodayString();
+                setTasks(prev => {
+                    const filtered = prev.filter(task => {
+                        if (task.progress !== 100) return true;
+                        const completedDate = getLatestCompletionDate(task);
+                        return !completedDate || completedDate >= today;
+                    });
+                    return filtered.length === prev.length ? prev : filtered;
+                });
+            }, [timezone]);
 
             // --- 導出與匯入功能 ---
             const exportData = () => {
@@ -79,7 +132,7 @@
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = `worklog_backup_${new Date().toISOString().split('T')[0]}.json`;
+                link.download = `worklog_backup_${getTodayString()}.json`;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
@@ -115,7 +168,7 @@
             const handleOpenAddModal = () => {
                 setEditingTask(null);
                 setNewTask({
-                    name: '', content: '', startDate: new Date().toISOString().split('T')[0],
+                    name: '', content: '', startDate: getTodayString(),
                     deadline: '', priority: '普通', progress: 0
                 });
                 setIsModalOpen(true);
@@ -134,10 +187,11 @@
                 if (editingTask) {
                     setTasks(prev => prev.map(t => t.id === editingTask.id ? { ...newTask } : t));
                 } else {
+                    const today = getTodayString();
                     const taskWithId = { 
                         ...newTask, id: Date.now(), 
-                        createdAt: new Date().toISOString().split('T')[0],
-                        history: [{ date: new Date().toISOString().split('T')[0], progress: 0 }] 
+                        createdAt: today,
+                        history: [{ date: today, progress: 0 }] 
                     };
                     setTasks([...tasks, taskWithId]);
                 }
@@ -145,7 +199,7 @@
             };
 
             const updateProgress = (taskId, newProgress) => {
-                const today = new Date().toISOString().split('T')[0];
+                const today = getTodayString();
                 const val = Math.min(100, Math.max(0, parseInt(newProgress) || 0));
                 setTasks(prev => prev.map(task => {
                     if (task.id === taskId) {
@@ -157,15 +211,14 @@
             };
 
             const saveDailyReport = () => {
-                const today = new Date().toISOString().split('T')[0];
+                const today = getTodayString();
                 setDailyLogs(prev => ({
                     ...prev,
                     [today]: {
                         report: todayReport, note: todayNote,
-                        taskSnapshot: tasks.map(t => ({ id: t.id, name: t.name, progress: t.progress, createdAt: t.createdAt }))
+                        taskSnapshot: tasks.map(t => ({ id: t.id, name: t.name, progress: t.progress, createdAt: t.createdAt, content: t.content || '' }))
                     }
                 }));
-                setTodayReport(''); setTodayNote('');
                 alert('今日數據已儲存！');
             };
 
@@ -327,9 +380,13 @@
                                                             </td>
                                                             <td className="px-6 py-4 space-y-1">
                                                                 {finished.length === 0 ? <span className="text-slate-300 italic text-xs">-</span> : finished.map(t => (
-                                                                    <div key={t.id} className="text-green-600 flex items-center gap-1 font-medium">
+                                                                    <button
+                                                                        key={t.id}
+                                                                        onClick={() => setDetailTask(t)}
+                                                                        className="text-green-600 flex items-center gap-1 font-medium hover:text-green-800 hover:underline"
+                                                                    >
                                                                         <Icon name="check-circle" size={12}/> {t.name}
-                                                                    </div>
+                                                                    </button>
                                                                 ))}
                                                             </td>
                                                             <td className="px-6 py-4 whitespace-pre-wrap text-slate-600 text-xs">{log.report || '-'}</td>
@@ -349,6 +406,21 @@
                                         <Icon name="check-circle-2" className="text-green-500" size={18}/> 今日工作快照
                                     </h2>
                                     <div className="space-y-4">
+                                        <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                            <div className="flex items-center justify-between gap-3 mb-2">
+                                                <div>
+                                                    <p className="text-[11px] font-bold text-slate-500">時區設定</p>
+                                                    <p className="text-[11px] text-slate-400">預設 UTC+8</p>
+                                                </div>
+                                            </div>
+                                            <select
+                                                value={timezone}
+                                                onChange={(e) => setTimezone(e.target.value)}
+                                                className="w-full border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                            >
+                                                {timezoneOptions.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                                            </select>
+                                        </div>
                                         <div>
                                             <label className="text-[11px] font-bold text-slate-500 block mb-1">今日摘要</label>
                                             <textarea 
@@ -450,6 +522,32 @@
                                             </button>
                                         </div>
                                     </form>
+                                </div>
+                            </div>
+                        )}
+                        {detailTask && (
+                            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                                <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+                                    <div className="p-6 border-b flex justify-between items-center bg-slate-50/50">
+                                        <h3 className="font-bold text-xl text-slate-900">完成任務詳情</h3>
+                                        <button onClick={() => setDetailTask(null)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                                            <Icon name="x" size={20}/>
+                                        </button>
+                                    </div>
+                                    <div className="p-6 space-y-4">
+                                        <div>
+                                            <p className="text-sm font-bold text-slate-700 mb-2">任務名稱</p>
+                                            <p className="text-slate-900">{detailTask.name}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-bold text-slate-700 mb-2">任務描述</p>
+                                            <p className="whitespace-pre-wrap text-slate-600 text-sm">{detailTask.content || '無詳細描述'}</p>
+                                        </div>
+                                        <div className="flex gap-4 text-[12px] text-slate-500">
+                                            <span>進度：{detailTask.progress}%</span>
+                                            <span>建立於：{detailTask.createdAt}</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         )}
