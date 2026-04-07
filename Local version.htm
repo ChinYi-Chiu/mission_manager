@@ -509,6 +509,7 @@
                 if (node.completed) statusTags += `<span class="bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">已完成</span>`;
                 if (node.isExtended) statusTags += `<span class="bg-red-50 text-red-500 px-1.5 py-0.5 rounded ml-1">已延長工時</span>`;
                 if (node.isEarly) statusTags += `<span class="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded ml-1">超前 ${node.earlyHours}h</span>`;
+                if (node.isOverrun) statusTags += `<span class="bg-yellow-50 text-amber-600 px-1.5 py-0.5 rounded ml-1">已超過計畫工時</span>`;
 
                 return `
                     <div class="pl-${depth * 4} border-l-2 border-slate-100">
@@ -548,8 +549,26 @@
 
         function renderManualGoalOptions() {
             const select = document.getElementById('manual-goal-select');
-            select.innerHTML = state.goals.map(g => `<option value="${g.id}">${g.title}</option>`).join('');
-            if (state.goals.length > 0) select.value = state.goals[0].id;
+            const availableGoals = state.goals.filter(g => {
+                const leaves = [];
+                collectIncompleteLeafNodes(g, leaves);
+                return leaves.length > 0;
+            });
+
+            if (availableGoals.length === 0) {
+                select.innerHTML = `<option value="">無可核銷的計畫</option>`;
+                select.disabled = true;
+                renderManualTaskOptions();
+                return;
+            }
+
+            select.disabled = false;
+            select.innerHTML = availableGoals.map(g => {
+                const stats = getGoalStats(g);
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+                return `<option value="${g.id}">${g.title} (${progress}%)</option>`;
+            }).join('');
+            select.value = availableGoals[0].id;
             renderManualTaskOptions();
         }
 
@@ -564,14 +583,14 @@
                 return;
             }
             const leaves = [];
-            collectLeafNodes(goal, leaves);
+            collectIncompleteLeafNodes(goal, leaves);
             if (leaves.length === 0) {
-                taskSelect.innerHTML = `<option value="">此計畫尚無末端子任務</option>`;
+                taskSelect.innerHTML = `<option value="">此計畫暫無可核銷的末端子任務</option>`;
                 taskSelect.disabled = true;
                 return;
             }
             taskSelect.disabled = false;
-            taskSelect.innerHTML = leaves.map(t => `<option value="${t.id}">${t.title} (${t.targetHours.toFixed(1)}h)</option>`).join('');
+            taskSelect.innerHTML = leaves.map(t => `<option value="${t.id}">${t.title} (${t.doneHours.toFixed(1)} / ${t.targetHours.toFixed(1)}h)</option>`).join('');
         }
 
         function confirmManualVerification() {
@@ -587,6 +606,15 @@
                 alert('任務選擇錯誤，請重新選擇。');
                 return;
             }
+
+            const remaining = Math.max(0, (task.targetHours || 0) - (task.doneHours || 0));
+            if (hours > remaining) {
+                const over = parseFloat((hours - remaining).toFixed(1));
+                if (!confirm(`本次核銷會超出此任務剩餘計畫工時 ${remaining.toFixed(1)}h，超出 ${over}h，是否繼續？`)) return;
+                task.isOverrun = true;
+                task.overrunHours = parseFloat(((task.doneHours || 0) + hours - task.targetHours).toFixed(1));
+            }
+
             let logMsg = `手動核銷任務「${task.title}」：`;
             if (hours === 0) {
                 logMsg += `今日逾期 (未核銷時數)`;
@@ -595,12 +623,16 @@
             }
             task.doneHours += hours;
             if (task.doneHours >= task.targetHours) {
-                task.doneHours = task.targetHours;
                 task.completed = true;
                 logMsg += ' ➔ 任務正式結案';
                 const parentNode = findParentNode(taskId);
                 if (parentNode) checkAndMarkParentCompleted(parentNode);
             }
+            if (task.isOverrun) {
+                const overrunAmount = parseFloat((task.doneHours - task.targetHours).toFixed(1));
+                logMsg += ` ➔ 超出計畫工時 ${overrunAmount}h`;
+            }
+
             state.todayAvailableHours -= hours;
             task.lastVerifiedDate = getTodayString();
             addLog(parentGoal.id, logMsg);
@@ -616,6 +648,16 @@
             node.children.forEach(c => collectLeafNodes(c, result));
         }
 
+        function collectIncompleteLeafNodes(node, result) {
+            if (!node.children || node.children.length === 0) {
+                const done = node.doneHours || 0;
+                const target = node.targetHours || 0;
+                if (done < target) result.push(node);
+                return;
+            }
+            node.children.forEach(c => collectIncompleteLeafNodes(c, result));
+        }
+
         function openLogHours(taskId, title, suggested) {
             const task = findNode(taskId);
             const parentGoal = findParentGoal(taskId);
@@ -627,6 +669,14 @@
 
             document.getElementById('log-confirm-btn').onclick = () => {
                 const hours = parseFloat(document.getElementById('log-hours-input').value) || 0;
+                const remaining = Math.max(0, (task.targetHours || 0) - (task.doneHours || 0));
+                if (hours > remaining) {
+                    const over = parseFloat((hours - remaining).toFixed(1));
+                    if (!confirm(`本次核銷會超出此任務剩餘計畫工時 ${remaining.toFixed(1)}h，超出 ${over}h，是否繼續？`)) return;
+                    task.isOverrun = true;
+                    task.overrunHours = parseFloat(((task.doneHours || 0) + hours - task.targetHours).toFixed(1));
+                }
+
                 let logMsg = `核銷任務「${task.title}」：`;
                 const delta = parseFloat((hours - suggested).toFixed(1));
                 
@@ -640,17 +690,18 @@
                     logMsg += `今日超前核銷 ${hours}h (超出規劃 ${delta}h)`;
                 }
 
-                // 更新任務進度
                 task.doneHours += hours;
                 if (task.doneHours >= task.targetHours) {
-                    task.doneHours = task.targetHours;
                     task.completed = true;
                     logMsg += " ➔ 任務正式結案";
                     const parentNode = findParentNode(taskId);
                     if (parentNode) checkAndMarkParentCompleted(parentNode);
                 }
+                if (task.isOverrun) {
+                    const overrunAmount = parseFloat((task.doneHours - task.targetHours).toFixed(1));
+                    logMsg += ` ➔ 超出計畫工時 ${overrunAmount}h`;
+                }
 
-                // 核心改動：扣除今日可用額度 (允許變為負值)
                 state.todayAvailableHours -= hours;
                 task.lastVerifiedDate = getTodayString();
 
