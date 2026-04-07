@@ -16,6 +16,16 @@
         .status-overdue { color: #ef4444; } 
         .status-completed { color: #94a3b8; } 
         .status-ahead { color: #10b981; } 
+        .node {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            white-space: nowrap;
+            z-index: 10;
+        }
+        #detail-task-tree {
+            min-height: 480px;
+            position: relative;
+        }
     </style>
 </head>
 <body class="min-h-screen pb-24">
@@ -551,9 +561,53 @@
         }
 
         function generateHorizontalTreeHTML(nodes) {
-            if (!nodes || nodes.length === 0) return '';
+            if (!nodes || nodes.length === 0) {
+                return `<div class="py-10 text-center text-slate-500">尚無子任務可顯示</div>`;
+            }
 
-            function renderBranch(node) {
+            const spacingX = 260;
+            const spacingY = 120;
+            let nextX = 0;
+            const positions = new Map();
+            const allNodes = [];
+
+            function computeLayout(node, depth) {
+                const y = 80 + depth * spacingY;
+                allNodes.push(node);
+
+                if (!node.children || node.children.length === 0) {
+                    const x = nextX || spacingX;
+                    nextX = x + spacingX;
+                    positions.set(node, { x, y });
+                    return { min: x, max: x };
+                }
+
+                const childRanges = node.children.map(child => computeLayout(child, depth + 1));
+                const x = (childRanges[0].min + childRanges[childRanges.length - 1].max) / 2;
+                positions.set(node, { x, y });
+                return { min: childRanges[0].min, max: childRanges[childRanges.length - 1].max };
+            }
+
+            nodes.forEach(node => computeLayout(node, 0));
+            const width = Math.max(nextX + spacingX, 600);
+            const height = Math.max(...Array.from(positions.values()).map(p => p.y)) + spacingY;
+
+            const linePaths = [];
+            function buildPaths(node) {
+                if (!node.children || node.children.length === 0) return;
+                const parent = positions.get(node);
+                node.children.forEach(child => {
+                    const childPos = positions.get(child);
+                    const curve = Math.max(40, Math.abs(childPos.x - parent.x) * 0.3);
+                    const d = `M ${parent.x} ${parent.y + 24} C ${parent.x} ${parent.y + curve}, ${childPos.x} ${childPos.y - curve}, ${childPos.x} ${childPos.y - 24}`;
+                    linePaths.push(`<path d="${d}" stroke="#334155" stroke-width="2" fill="none" stroke-linecap="round" />`);
+                    buildPaths(child);
+                });
+            }
+            nodes.forEach(buildPaths);
+
+            const nodesHTML = allNodes.map(node => {
+                const { x, y } = positions.get(node);
                 const stats = getGoalStats(node);
                 const isLeaf = !node.children || node.children.length === 0;
                 const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
@@ -562,49 +616,35 @@
                 if (node.isExtended) statusTags.push(`<span class="bg-red-50 text-red-500 px-1.5 py-0.5 rounded ml-1">已延長工時</span>`);
                 if (node.isEarly) statusTags.push(`<span class="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded ml-1">超前 ${node.earlyHours}h</span>`);
                 if (node.isOverrun) statusTags.push(`<span class="bg-yellow-50 text-amber-600 px-1.5 py-0.5 rounded ml-1">已超過計畫工時</span>`);
-                const card = `
-                    <div class="p-4 bg-white rounded-3xl shadow-sm border border-slate-200 ${node.completed ? 'opacity-70' : ''} w-[220px] text-center">
-                        <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-700'}">${node.title}</p>
-                        <div class="flex flex-wrap justify-center items-center gap-2 mt-2 text-[10px] text-slate-500">
-                            <span>${stats.done.toFixed(1)} / ${stats.target.toFixed(1)} h</span>
-                            <span>${progress}%</span>
-                            ${isLeaf ? '<span class="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">末端</span>' : '<span class="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">父節點</span>'}
-                            ${statusTags.join('')}
-                        </div>
-                    </div>
-                `;
-
-                if (!node.children || node.children.length === 0) {
-                    return `<div class="relative flex flex-col items-center gap-4">${card}</div>`;
-                }
-
-                const childrenHTML = node.children.map(child => `
-                    <div class="relative flex flex-col items-center gap-4 min-w-[260px]">
-                        <div class="absolute top-0 left-1/2 w-0.5 h-8 bg-slate-300 rounded-full"></div>
-                        ${renderBranch(child)}
-                    </div>
-                `).join('');
 
                 return `
-                    <div class="relative flex flex-col items-center gap-6 w-full">
-                        <div class="relative z-10">${card}</div>
-                        <div class="absolute top-0 left-1/2 w-0.5 h-6 bg-slate-300 rounded-full"></div>
-                        <div class="absolute top-6 inset-x-0 h-0.5 bg-slate-300"></div>
-                        <div class="relative flex justify-center gap-10 w-full pt-10">
-                            ${childrenHTML}
+                    <div class="absolute node" style="left:${x}px; top:${y}px;">
+                        <div class="p-3 bg-white border-2 border-slate-300 rounded-2xl shadow-sm ${node.completed ? 'opacity-70' : ''}">
+                            <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-900'}">${node.title}</p>
+                            <div class="mt-2 text-[10px] text-slate-500">
+                                <span>${stats.done.toFixed(1)} / ${stats.target.toFixed(1)}h</span>
+                                <span class="ml-2">${progress}%</span>
+                            </div>
                         </div>
                     </div>
                 `;
-            }
+            }).join('');
 
-            return `<div class="flex flex-col items-center gap-8 w-full">${nodes.map(renderBranch).join('')}</div>`;
+            return `
+                <div class="relative overflow-visible" style="min-height:${height}px; min-width:${width}px;">
+                    <svg width="${width}" height="${height}" class="absolute inset-0 pointer-events-none">
+                        ${linePaths.join('')}
+                    </svg>
+                    ${nodesHTML}
+                </div>
+            `;
         }
 
         function renderDetailTaskTree(goal) {
             const container = document.getElementById('detail-task-tree');
             if (!container) return;
             if (detailTreeMode === 'horizontal') {
-                container.innerHTML = generateHorizontalTreeHTML(goal.children || []);
+                container.innerHTML = generateHorizontalTreeHTML([goal]);
             } else {
                 container.innerHTML = generateDetailTreeHTML(goal.children || [], 0);
             }
