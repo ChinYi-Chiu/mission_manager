@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>任務核心規劃器 V4 - 精準動態版</title>
+    <title>任務規劃工具</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
@@ -71,7 +71,7 @@
                 <div>
                     <h4 class="font-bold text-slate-800 mb-4 flex items-center justify-between">
                         子任務執行狀態
-                        <span class="text-[10px] text-slate-400 font-medium">時數調整需透過下方功能鈕</span>
+                        <span class="text-[10px] text-slate-400 font-medium">時數調整只能「超前完成」或是「延長工時」</span>
                     </h4>
                     <div id="detail-tasks-list" class="space-y-3"></div>
                 </div>
@@ -94,7 +94,7 @@
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">優先級</label>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">優先級 (數字越大越重要)</label>
                         <input type="number" id="edit-goal-priority" class="w-full bg-slate-50 p-3 rounded-xl mt-1 outline-none">
                     </div>
                     <div>
@@ -109,7 +109,7 @@
                 <div class="pt-4 border-t">
                     <div class="flex justify-between items-center mb-3">
                         <span class="text-xs font-bold text-slate-400">管理子任務項目</span>
-                        <button onclick="addNewSubTask(activeGoalId)" class="text-indigo-600 text-xs font-bold bg-indigo-50 px-2 py-1 rounded-lg">+ 新增項目</button>
+                        <button onclick="addNewSubTask(activeGoalId)" class="text-indigo-600 text-xs font-bold bg-indigo-50 px-2 py-1 rounded-lg">+ 新增子任務</button>
                     </div>
                     <div id="edit-subtasks-list" class="space-y-2 max-h-40 overflow-y-auto custom-scrollbar pr-2"></div>
                 </div>
@@ -363,16 +363,14 @@
                 `;
                 groups[date].forEach(t => {
                     const isVerified = isToday && t.verifiedDate === date;
-                    const btnClasses = isVerified ? 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-slate-100 text-slate-400 flex items-center justify-center cursor-not-allowed' : 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-white flex items-center justify-center hover:border-indigo-500 transition-colors';
-                    const btnProps = isVerified ? 'disabled' : `onclick="openLogHours(${t.taskId}, '${t.title}', ${t.hours})"`;
+                    const isClickable = isToday && !isVerified;
+                    const btnClasses = isClickable ? 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-white flex items-center justify-center hover:border-indigo-500 transition-colors' : 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-slate-100 text-slate-400 flex items-center justify-center cursor-not-allowed';
+                    const btnProps = isClickable ? `onclick="openLogHours(${t.taskId}, '${t.title}', ${t.hours})"` : 'disabled';
 
                     html += `
                         <div class="flex items-center justify-between group/item">
                             <div class="flex items-center gap-3">
-                                <label class="inline-flex items-center gap-2 text-slate-500 text-xs">
-                                    <input type="checkbox" ${isVerified ? 'checked disabled' : ''} class="w-4 h-4 text-indigo-600 border-slate-300 rounded" />
-                                    ${isVerified ? '已核銷' : ''}
-                                </label>
+                                <span style="display:${isVerified ? 'block' : 'none'}" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-500 text-white">${isVerified ? '已核銷' : ''}</span>
                                 <div>
                                     <p class="text-sm font-bold text-slate-700">${t.title}</p>
                                     <p class="text-[9px] text-slate-400 font-medium">${t.parent}</p>
@@ -481,15 +479,16 @@
             document.getElementById('log-confirm-btn').onclick = () => {
                 const hours = parseFloat(document.getElementById('log-hours-input').value) || 0;
                 let logMsg = `核銷任務「${task.title}」：`;
+                const delta = parseFloat((hours - suggested).toFixed(1));
                 
                 if (hours === 0) {
                     logMsg += `今日逾期 (未核銷時數)`;
                 } else if (hours < suggested) {
-                    logMsg += `今日核銷 ${hours}h (不足規劃 ${suggested}h)`;
-                } else if (hours === suggested) {
+                    logMsg += `今日核銷 ${hours}h (少 ${parseFloat((suggested - hours).toFixed(1))}h)`;
+                } else if (Math.abs(delta) < 0.05) {
                     logMsg += `今日順利完成 ${hours}h`;
                 } else {
-                    logMsg += `今日超前核銷 ${hours}h (超過規劃 ${suggested}h)`;
+                    logMsg += `今日超前核銷 ${hours}h (超出規劃 ${delta}h)`;
                 }
 
                 // 更新任務進度
