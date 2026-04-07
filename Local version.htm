@@ -71,9 +71,10 @@
                 <div>
                     <div class="flex items-center justify-between mb-3">
                         <h4 class="font-bold text-slate-800">子任務執行狀態</h4>
-                        <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                                <div class="flex items-center gap-2 text-[10px] text-slate-400">
                             <span>樹狀圖縮放(開發中)</span>
                             <input disabled id="detail-tree-scale" type="range" min="0.8" max="1.4" step="0.1" value="1" onchange="updateDetailTreeScale(this.value)" class="h-1 w-24 rounded-full bg-slate-200">
+                            <button id="detail-tree-mode-btn" onclick="toggleDetailTreeMode()" class="text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg hover:bg-indigo-100 transition">水平樹</button>
                         </div>
                     </div>
                     <div id="detail-task-tree-wrapper" class="overflow-x-auto">
@@ -216,6 +217,7 @@
         let activeGoalId = null;
         let isNewGoalEdit = false;
         let detailTreeScale = 1;
+        let detailTreeMode = 'vertical';
 
         // --- 初始化 & 存取 ---
         window.onload = () => {
@@ -269,58 +271,68 @@
         // --- 排程演算法 (修正為滾動調整當日分配) ---
         function calculateSchedule() {
             const todayStr = getTodayString();
-            let pool = [];
-            state.goals.forEach(g => collectActiveLeaves(g, g.title, g.priority, g.weight, pool));
+            const planStates = state.goals.map(g => {
+                const leaves = [];
+                collectGoalLeaves(g, leaves, 0);
+                const activeLeaves = leaves
+                    .filter(t => !t.completed && (t.targetHours || 0) > (t.doneHours || 0))
+                    .map((t, index) => ({ ...t, remaining: Math.max(0, (t.targetHours || 0) - (t.doneHours || 0)), treeIndex: index, parent: g.title }));
+                return { goal: g, leaves: activeLeaves, priority: g.priority, weight: g.weight };
+            }).filter(p => p.leaves.length > 0);
 
             const schedule = [];
-            const simulated = pool.map(t => ({ ...t, remaining: Math.max(0, (t.targetHours || 0) - (t.doneHours || 0)) }));
             const availableToday = Math.max(0, state.todayAvailableHours);
 
-            // 規劃未來 7 天
             for (let i = 0; i < 7; i++) {
                 const dStr = getOffsetDateString(i);
                 if (state.offDays.includes(dStr)) continue;
-
                 const isToday = (dStr === todayStr);
-                let dayRem = isToday ? availableToday : state.dailyMaxHours;
+                const dayRemTotal = isToday ? availableToday : state.dailyMaxHours;
+                const activePlans = planStates.filter(p => p.leaves.some(t => t.remaining > 0 && (!isToday || t.lastVerifiedDate !== todayStr)));
+                if (activePlans.length === 0) break;
 
-                const active = simulated.filter(t => t.remaining > 0);
-                if (active.length === 0) break;
-
-                const maxP = Math.max(...active.map(t => t.priority));
-                const topP = active.filter(t => t.priority === maxP);
-                const totalW = topP.reduce((s, t) => s + t.weight, 0);
-
-                if (isToday && dayRem <= 0) {
-                    topP.forEach(task => {
-                        schedule.push({
-                            date: dStr,
-                            taskId: task.id,
-                            title: task.title,
-                            parent: task.parent,
-                            hours: 0,
-                            verifiedDate: task.lastVerifiedDate || null
-                        });
+                if (dayRemTotal <= 0 && isToday) {
+                    const topPlanTasks = selectPlans(activePlans).flatMap(p => p.leaves.filter(t => t.lastVerifiedDate !== todayStr).slice(0, 3));
+                    topPlanTasks.forEach(task => {
+                        schedule.push({ date: dStr, taskId: task.id, title: task.title, parent: task.parent, hours: 0, verifiedDate: task.lastVerifiedDate || null });
                     });
                     continue;
                 }
 
-                topP.forEach(task => {
-                    const shareBase = isToday ? dayRem : state.dailyMaxHours;
-                    let share = (task.weight / (totalW || 1)) * shareBase;
-                    let work = Math.min(task.remaining, share, dayRem);
+                const selectedPlans = selectPlans(activePlans);
+                let planHours = {};
+                if (selectedPlans.length === 1) {
+                    planHours[selectedPlans[0].goal.id] = dayRemTotal;
+                } else {
+                    const totalWeight = selectedPlans.reduce((sum, p) => sum + p.weight, 0) || 1;
+                    selectedPlans.forEach(p => {
+                        planHours[p.goal.id] = (dayRemTotal * (p.weight / totalWeight));
+                    });
+                }
 
-                    if (work > 0) {
-                        schedule.push({
-                            date: dStr,
-                            taskId: task.id,
-                            title: task.title,
-                            parent: task.parent,
-                            hours: parseFloat(work.toFixed(1)),
-                            verifiedDate: task.lastVerifiedDate || null
-                        });
-                        task.remaining -= work;
-                        dayRem -= work;
+                let carryOver = 0;
+                selectedPlans.forEach((plan, planIdx) => {
+                    const planBudget = Math.max(0, (planHours[plan.goal.id] || 0) + carryOver);
+                    carryOver = 0;
+                    const planLeaves = isToday ? plan.leaves.filter(t => t.lastVerifiedDate !== todayStr) : plan.leaves;
+                    const topTasks = selectTopPlanTasks(planLeaves);
+                    const ratios = topTasks.length === 1 ? [1] : topTasks.length === 2 ? [0.67, 0.33] : [0.5, 0.25, 0.25];
+                    let planRem = planBudget;
+                    topTasks.forEach((task, idx) => {
+                        const ratio = ratios[idx] || 0;
+                        let share = planBudget * ratio;
+                        if (idx === topTasks.length - 1) {
+                            share = planRem;
+                        }
+                        const work = Math.min(task.remaining, share, planRem);
+                        if (work > 0) {
+                            schedule.push({ date: dStr, taskId: task.id, title: task.title, parent: task.parent, hours: parseFloat(work.toFixed(1)), verifiedDate: task.lastVerifiedDate || null });
+                            task.remaining -= work;
+                            planRem -= work;
+                        }
+                    });
+                    if (planRem > 0 && planIdx + 1 < selectedPlans.length) {
+                        carryOver = planRem;
                     }
                 });
             }
@@ -345,6 +357,26 @@
             } else {
                 node.children.forEach(c => collectActiveLeaves(c, pName, priority, weight, result));
             }
+        }
+
+        function collectGoalLeaves(node, result, depth) {
+            if (!node.children || node.children.length === 0) {
+                result.push({ ...node, depth });
+                return;
+            }
+            node.children.forEach(c => collectGoalLeaves(c, result, depth + 1));
+        }
+
+        function selectPlans(planStates) {
+            const highestPriority = Math.max(...planStates.map(p => p.priority));
+            const topPlans = planStates.filter(p => p.priority === highestPriority);
+            if (topPlans.length <= 2) return topPlans.sort((a, b) => b.weight - a.weight);
+            return topPlans.sort((a, b) => b.weight - a.weight).slice(0, 2);
+        }
+
+        function selectTopPlanTasks(leaves) {
+            const sorted = leaves.slice().sort((a, b) => a.treeIndex - b.treeIndex);
+            return sorted.slice(0, 3);
         }
 
         // --- UI 渲染 ---
@@ -508,10 +540,74 @@
             if (tree) tree.style.fontSize = detailTreeScale + 'rem';
         }
 
+        function toggleDetailTreeMode() {
+            detailTreeMode = detailTreeMode === 'vertical' ? 'horizontal' : 'vertical';
+            const btn = document.getElementById('detail-tree-mode-btn');
+            if (btn) btn.innerText = detailTreeMode === 'horizontal' ? '垂直樹' : '水平樹';
+            if (activeGoalId) {
+                const goal = state.goals.find(g => g.id === activeGoalId);
+                if (goal) renderDetailTaskTree(goal);
+            }
+        }
+
+        function generateHorizontalTreeHTML(nodes) {
+            if (!nodes || nodes.length === 0) return '';
+
+            function renderBranch(node) {
+                const stats = getGoalStats(node);
+                const isLeaf = !node.children || node.children.length === 0;
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+                const statusTags = [];
+                if (node.completed) statusTags.push(`<span class="bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">已完成</span>`);
+                if (node.isExtended) statusTags.push(`<span class="bg-red-50 text-red-500 px-1.5 py-0.5 rounded ml-1">已延長工時</span>`);
+                if (node.isEarly) statusTags.push(`<span class="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded ml-1">超前 ${node.earlyHours}h</span>`);
+                if (node.isOverrun) statusTags.push(`<span class="bg-yellow-50 text-amber-600 px-1.5 py-0.5 rounded ml-1">已超過計畫工時</span>`);
+                const card = `
+                    <div class="p-4 bg-white rounded-3xl shadow-sm border border-slate-200 ${node.completed ? 'opacity-70' : ''} w-[220px] text-center">
+                        <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-700'}">${node.title}</p>
+                        <div class="flex flex-wrap justify-center items-center gap-2 mt-2 text-[10px] text-slate-500">
+                            <span>${stats.done.toFixed(1)} / ${stats.target.toFixed(1)} h</span>
+                            <span>${progress}%</span>
+                            ${isLeaf ? '<span class="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">末端</span>' : '<span class="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">父節點</span>'}
+                            ${statusTags.join('')}
+                        </div>
+                    </div>
+                `;
+
+                if (!node.children || node.children.length === 0) {
+                    return `<div class="relative flex flex-col items-center gap-4">${card}</div>`;
+                }
+
+                const childrenHTML = node.children.map(child => `
+                    <div class="relative flex flex-col items-center gap-4 min-w-[260px]">
+                        <div class="absolute top-0 left-1/2 w-0.5 h-8 bg-slate-300 rounded-full"></div>
+                        ${renderBranch(child)}
+                    </div>
+                `).join('');
+
+                return `
+                    <div class="relative flex flex-col items-center gap-6 w-full">
+                        <div class="relative z-10">${card}</div>
+                        <div class="absolute top-0 left-1/2 w-0.5 h-6 bg-slate-300 rounded-full"></div>
+                        <div class="absolute top-6 inset-x-0 h-0.5 bg-slate-300"></div>
+                        <div class="relative flex justify-center gap-10 w-full pt-10">
+                            ${childrenHTML}
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `<div class="flex flex-col items-center gap-8 w-full">${nodes.map(renderBranch).join('')}</div>`;
+        }
+
         function renderDetailTaskTree(goal) {
             const container = document.getElementById('detail-task-tree');
             if (!container) return;
-            container.innerHTML = generateDetailTreeHTML(goal.children || [], 0);
+            if (detailTreeMode === 'horizontal') {
+                container.innerHTML = generateHorizontalTreeHTML(goal.children || []);
+            } else {
+                container.innerHTML = generateDetailTreeHTML(goal.children || [], 0);
+            }
         }
 
         function generateDetailTreeHTML(nodes, depth) {
