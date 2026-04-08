@@ -282,47 +282,71 @@
         function calculateSchedule() {
             const todayStr = getTodayString();
             let pool = [];
+            // 每個計畫現在只會貢獻一個任務進入 pool
             state.goals.forEach(g => collectActiveLeaves(g, g.title, g.priority, g.weight, pool));
 
             const schedule = [];
+            // 建立模擬用的剩餘時間副本
             const simulated = pool.map(t => ({ ...t, remaining: Math.max(0, (t.targetHours || 0) - (t.doneHours || 0)) }));
             const availableToday = Math.max(0, state.todayAvailableHours);
 
-            // 規劃未來 7 天
             for (let i = 0; i < 7; i++) {
                 const dStr = getOffsetDateString(i);
                 if (state.offDays.includes(dStr)) continue;
 
                 const isToday = (dStr === todayStr);
                 let dayRem = isToday ? availableToday : state.dailyMaxHours;
+                const dailyLimit = dayRem;
 
-                const active = simulated.filter(t => t.remaining > 0);
+                // 篩選出還有工作要做的任務
+                let active = simulated.filter(t => t.remaining > 0);
                 if (active.length === 0) break;
 
+                // 找出最高優先級
                 const maxP = Math.max(...active.map(t => t.priority));
-                const topP = active.filter(t => t.priority === maxP);
-                const totalW = topP.reduce((s, t) => s + t.weight, 0);
+                let topP = active.filter(t => t.priority === maxP);
 
-                if (isToday && dayRem <= 0) {
-                    topP.forEach(task => {
-                        schedule.push({
-                            date: dStr,
-                            taskId: task.id,
-                            title: task.title,
-                            parent: task.parent,
-                            hours: 0,
-                            verifiedDate: task.lastVerifiedDate || null
-                        });
+                // --- 邏輯 2：計算修正後的權重 (填補至 100%) ---
+                const rawTotalW = topP.reduce((s, t) => s + t.weight, 0);
+                const weightCompensation = rawTotalW < 100 ? (100 - rawTotalW) / topP.length : 0;
+                
+                // 為本次計算加上「分配權重」屬性
+                topP.forEach(t => t.tempWeight = t.weight + weightCompensation);
+                const adjustedTotalW = topP.reduce((s, t) => s + t.tempWeight, 0);
+
+                // --- 邏輯 4：兩階段時間分配 (處理 Slack Time) ---
+                let quotaMap = new Map();
+                let slackTime = 0;
+                let needsMore = [];
+
+                // 第一階段：基礎配額計算
+                topP.forEach(task => {
+                    let initialQuota = (task.tempWeight / adjustedTotalW) * dailyLimit;
+                    if (task.remaining < initialQuota) {
+                        // 計畫用不完配額
+                        quotaMap.set(task.id, task.remaining);
+                        slackTime += (initialQuota - task.remaining);
+                    } else {
+                        // 計畫可能需要更多或剛好
+                        quotaMap.set(task.id, initialQuota);
+                        needsMore.push(task);
+                    }
+                });
+
+                // 第二階段：重分配閒置時間 (Slack)
+                if (slackTime > 0 && needsMore.length > 0) {
+                    const extraTotalW = needsMore.reduce((s, t) => s + t.tempWeight, 0);
+                    needsMore.forEach(task => {
+                        const extra = (task.tempWeight / extraTotalW) * slackTime;
+                        const newQuota = Math.min(task.remaining, quotaMap.get(task.id) + extra);
+                        quotaMap.set(task.id, newQuota);
                     });
-                    continue;
                 }
 
+                // 執行分配並寫入排程
                 topP.forEach(task => {
-                    const shareBase = isToday ? dayRem : state.dailyMaxHours;
-                    let share = (task.weight / (totalW || 1)) * shareBase;
-                    let work = Math.min(task.remaining, share, dayRem);
-
-                    if (work > 0) {
+                    let work = quotaMap.get(task.id) || 0;
+                    if (work > 0 || (isToday && dailyLimit === 0)) { // 處理今日已無額度的顯示
                         schedule.push({
                             date: dStr,
                             taskId: task.id,
@@ -347,15 +371,24 @@
             return formatter.format(d);
         }
 
+        // 修改後的函數：一個計畫只抓一個任務
         function collectActiveLeaves(node, pName, priority, weight, result) {
-            if (node.completed) return;
+            if (node.completed) return false; // 已完成，跳過
+
+            // 如果是末端子任務
             if (!node.children || node.children.length === 0) {
                 if (node.targetHours > node.doneHours) {
-                    // 深拷貝對象以供排程模擬計算
                     result.push({ ...node, parent: pName, priority, weight });
+                    return true; // 找到第一個未完成，回傳 true 終止後續同級搜尋
                 }
+                return false;
             } else {
-                node.children.forEach(c => collectActiveLeaves(c, pName, priority, weight, result));
+                // 遍歷子節點，只要其中一個子節點找到了任務，就停止遍歷其他兄弟節點
+                for (let child of node.children) {
+                    const found = collectActiveLeaves(child, pName, priority, weight, result);
+                    if (found) return true; 
+                }
+                return false;
             }
         }
 
