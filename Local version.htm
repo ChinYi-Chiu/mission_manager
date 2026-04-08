@@ -278,71 +278,61 @@
             document.getElementById('today-info').innerText = `${dateStr} (${state.timezone.split('/').pop()})`;// 每次更新日期顯示時也檢查是否需要重置工時
         }
 
-        // --- 排程演算法 (修正為滾動調整當日分配) ---
+        // --- 排程演算法 ---
         function calculateSchedule() {
             const todayStr = getTodayString();
-            const planStates = state.goals.map(g => {
-                const leaves = [];
-                collectGoalLeaves(g, leaves, 0);
-                const activeLeaves = leaves
-                    .filter(t => !t.completed && (t.targetHours || 0) > (t.doneHours || 0))
-                    .map((t, index) => ({ ...t, remaining: Math.max(0, (t.targetHours || 0) - (t.doneHours || 0)), treeIndex: index, parent: g.title }));
-                return { goal: g, leaves: activeLeaves, priority: g.priority, weight: g.weight };
-            }).filter(p => p.leaves.length > 0);
+            let pool = [];
+            state.goals.forEach(g => collectActiveLeaves(g, g.title, g.priority, g.weight, pool));
 
             const schedule = [];
+            const simulated = pool.map(t => ({ ...t, remaining: Math.max(0, (t.targetHours || 0) - (t.doneHours || 0)) }));
             const availableToday = Math.max(0, state.todayAvailableHours);
 
+            // 規劃未來 7 天
             for (let i = 0; i < 7; i++) {
                 const dStr = getOffsetDateString(i);
                 if (state.offDays.includes(dStr)) continue;
-                const isToday = (dStr === todayStr);
-                const dayRemTotal = isToday ? availableToday : state.dailyMaxHours;
-                const activePlans = planStates.filter(p => p.leaves.some(t => t.remaining > 0 && (!isToday || t.lastVerifiedDate !== todayStr)));
-                if (activePlans.length === 0) break;
 
-                if (dayRemTotal <= 0 && isToday) {
-                    const topPlanTasks = selectPlans(activePlans).flatMap(p => p.leaves.filter(t => t.lastVerifiedDate !== todayStr).slice(0, 3));
-                    topPlanTasks.forEach(task => {
-                        schedule.push({ date: dStr, taskId: task.id, title: task.title, parent: task.parent, hours: 0, verifiedDate: task.lastVerifiedDate || null });
+                const isToday = (dStr === todayStr);
+                let dayRem = isToday ? availableToday : state.dailyMaxHours;
+
+                const active = simulated.filter(t => t.remaining > 0);
+                if (active.length === 0) break;
+
+                const maxP = Math.max(...active.map(t => t.priority));
+                const topP = active.filter(t => t.priority === maxP);
+                const totalW = topP.reduce((s, t) => s + t.weight, 0);
+
+                if (isToday && dayRem <= 0) {
+                    topP.forEach(task => {
+                        schedule.push({
+                            date: dStr,
+                            taskId: task.id,
+                            title: task.title,
+                            parent: task.parent,
+                            hours: 0,
+                            verifiedDate: task.lastVerifiedDate || null
+                        });
                     });
                     continue;
                 }
 
-                const selectedPlans = selectPlans(activePlans);
-                let planHours = {};
-                if (selectedPlans.length === 1) {
-                    planHours[selectedPlans[0].goal.id] = dayRemTotal;
-                } else {
-                    const totalWeight = selectedPlans.reduce((sum, p) => sum + p.weight, 0) || 1;
-                    selectedPlans.forEach(p => {
-                        planHours[p.goal.id] = (dayRemTotal * (p.weight / totalWeight));
-                    });
-                }
+                topP.forEach(task => {
+                    const shareBase = isToday ? dayRem : state.dailyMaxHours;
+                    let share = (task.weight / (totalW || 1)) * shareBase;
+                    let work = Math.min(task.remaining, share, dayRem);
 
-                let carryOver = 0;
-                selectedPlans.forEach((plan, planIdx) => {
-                    const planBudget = Math.max(0, (planHours[plan.goal.id] || 0) + carryOver);
-                    carryOver = 0;
-                    const planLeaves = isToday ? plan.leaves.filter(t => t.lastVerifiedDate !== todayStr) : plan.leaves;
-                    const topTasks = selectTopPlanTasks(planLeaves);
-                    const ratios = topTasks.length === 1 ? [1] : topTasks.length === 2 ? [0.67, 0.33] : [0.5, 0.25, 0.25];
-                    let planRem = planBudget;
-                    topTasks.forEach((task, idx) => {
-                        const ratio = ratios[idx] || 0;
-                        let share = planBudget * ratio;
-                        if (idx === topTasks.length - 1) {
-                            share = planRem;
-                        }
-                        const work = Math.min(task.remaining, share, planRem);
-                        if (work > 0) {
-                            schedule.push({ date: dStr, taskId: task.id, title: task.title, parent: task.parent, hours: parseFloat(work.toFixed(1)), verifiedDate: task.lastVerifiedDate || null });
-                            task.remaining -= work;
-                            planRem -= work;
-                        }
-                    });
-                    if (planRem > 0 && planIdx + 1 < selectedPlans.length) {
-                        carryOver = planRem;
+                    if (work > 0) {
+                        schedule.push({
+                            date: dStr,
+                            taskId: task.id,
+                            title: task.title,
+                            parent: task.parent,
+                            hours: parseFloat(work.toFixed(1)),
+                            verifiedDate: task.lastVerifiedDate || null
+                        });
+                        task.remaining -= work;
+                        dayRem -= work;
                     }
                 });
             }
@@ -367,26 +357,6 @@
             } else {
                 node.children.forEach(c => collectActiveLeaves(c, pName, priority, weight, result));
             }
-        }
-
-        function collectGoalLeaves(node, result, depth) {
-            if (!node.children || node.children.length === 0) {
-                result.push({ ...node, depth });
-                return;
-            }
-            node.children.forEach(c => collectGoalLeaves(c, result, depth + 1));
-        }
-
-        function selectPlans(planStates) {
-            const highestPriority = Math.max(...planStates.map(p => p.priority));
-            const topPlans = planStates.filter(p => p.priority === highestPriority);
-            if (topPlans.length <= 2) return topPlans.sort((a, b) => b.weight - a.weight);
-            return topPlans.sort((a, b) => b.weight - a.weight).slice(0, 2);
-        }
-
-        function selectTopPlanTasks(leaves) {
-            const sorted = leaves.slice().sort((a, b) => a.treeIndex - b.treeIndex);
-            return sorted.slice(0, 3);
         }
 
         // --- UI 渲染 ---
@@ -474,7 +444,7 @@
                                     <p class="text-[9px] text-slate-400 truncate">${t.parent}</p>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <span class="text-xs font-black ${t.hours === 0 && isToday ? 'text-red-400' : 'text-slate-500'} tabular-nums">${t.hours}h</span>
+                                    <span class="text-xs font-black ${isVerified ? 'text-green-600' : t.hours === 0 && isToday ? 'text-red-400' : 'text-slate-500'} tabular-nums">${isVerified ? '已核銷' : t.hours + 'h'}</span>
                                     <button ${btnProps} class="${btnClasses}">
                                         <div class="w-1.5 h-1.5 rounded-full bg-slate-100"></div>
                                     </button>
@@ -620,7 +590,7 @@
                 return `
                     <div class="absolute node" style="left:${x}px; top:${y}px;">
                         <div class="p-3 bg-white border-2 border-slate-300 rounded-2xl shadow-sm ${node.completed ? 'opacity-70' : ''}">
-                            <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-900'}">${node.title}</p>
+                            <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-900'}">${node.title}${statusTags.join('')}</p>
                             <div class="mt-2 text-[10px] text-slate-500">
                                 <span>${stats.done.toFixed(1)} / ${stats.target.toFixed(1)}h</span>
                                 <span class="ml-2">${progress}%</span>
