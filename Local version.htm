@@ -878,6 +878,21 @@
             document.getElementById('edit-goal-priority').value = g.priority;
             document.getElementById('edit-goal-weight').value = g.weight;
             document.getElementById('edit-goal-deadline').value = g.deadline;
+
+            // 設置權重輸入的限制
+            const weightInput = document.getElementById('edit-goal-weight');
+            const priorityInput = document.getElementById('edit-goal-priority');
+            const updateWeightMax = () => {
+                const currentPriority = parseInt(priorityInput.value) || 1;
+                const otherGoals = state.goals.filter(goal => goal.id !== g.id);
+                const currentTotal = otherGoals.filter(goal => goal.priority === currentPriority).reduce((s, goal) => s + goal.weight, 0);
+                weightInput.max = 100 - currentTotal;
+            };
+            updateWeightMax();
+            priorityInput.addEventListener('input', updateWeightMax);
+            weightInput.min = 20;
+            weightInput.step = 20;
+
             renderTree();
             document.getElementById('edit-modal').classList.remove('hidden');
         }
@@ -952,13 +967,32 @@
             renderTree();
         }
 
+        function adjustWeight(w) {
+            const options = [20, 40, 60, 80, 100];
+            return options.reduce((prev, curr) => Math.abs(curr - w) < Math.abs(prev - w) ? curr : prev);
+        }
+
         function saveActiveGoal() {
             const g = state.goals.find(x => x.id === activeGoalId);
             g.title = document.getElementById('edit-goal-title').value;
             let priority = parseInt(document.getElementById('edit-goal-priority').value);
             if (isNaN(priority)) priority = 1;
-            g.priority = Math.min(5, Math.max(1, priority));
-            g.weight = parseInt(document.getElementById('edit-goal-weight').value);
+            priority = Math.min(5, Math.max(1, priority));
+
+            // 檢查優先級權重上限
+            const otherGoals = state.goals.filter(goal => goal.id !== g.id);
+            const currentTotal = otherGoals.filter(goal => goal.priority === priority).reduce((s, goal) => s + goal.weight, 0);
+            if (currentTotal >= 100) {
+                alert('該優先級權重已滿，無法設定為此優先級。');
+                return;
+            }
+
+            let weight = parseInt(document.getElementById('edit-goal-weight').value);
+            weight = adjustWeight(weight);
+            weight = Math.max(20, Math.min(weight, 100 - currentTotal));
+
+            g.priority = priority;
+            g.weight = weight;
             g.deadline = document.getElementById('edit-goal-deadline').value;
             const createdNodes = [];
             collectLiveNodes(g, createdNodes);
