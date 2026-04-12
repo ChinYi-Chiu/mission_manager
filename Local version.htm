@@ -102,7 +102,10 @@
     <!-- 編輯目標參數 Modal -->
     <div id="edit-modal" class="fixed inset-0 bg-slate-900/60 hidden z-[60] flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-lg rounded-3xl p-6 shadow-2xl modal-animate-in">
-            <h3 class="text-lg font-black mb-6">編輯計畫參數</h3>
+            <div class="px-6 py-4 border-b flex justify-between items-center bg-white sticky top-0 z-10">
+                <h3 class="text-xl font-black text-slate-900">編輯計畫參數</h3>
+                <button onclick="closeModals()" class="text-slate-300 text-3xl hover:text-slate-600 transition">&times;</button>
+            </div>
             <div class="space-y-5">
                 <div>
                     <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">目標名稱</label>
