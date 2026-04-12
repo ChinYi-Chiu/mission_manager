@@ -298,67 +298,94 @@
                 let dayRem = isToday ? availableToday : state.dailyMaxHours;
                 const dailyLimit = dayRem;
 
-                // 篩選出還有工作要做的任務
-                let active = simulated.filter(t => t.remaining > 0);
-                if (active.length === 0) break;
-
-                // 找出最高優先級
-                const maxP = Math.max(...active.map(t => t.priority));
-                let topP = active.filter(t => t.priority === maxP);
-
-                // --- 邏輯 2：計算修正後的權重 (填補至 100%) ---
-                const rawTotalW = topP.reduce((s, t) => s + t.weight, 0);
-                const weightCompensation = rawTotalW < 100 ? (100 - rawTotalW) / topP.length : 0;
-                
-                // 為本次計算加上「分配權重」屬性
-                topP.forEach(t => t.tempWeight = t.weight + weightCompensation);
-                const adjustedTotalW = topP.reduce((s, t) => s + t.tempWeight, 0);
-
-                // --- 邏輯 4：兩階段時間分配 (處理 Slack Time) ---
-                let quotaMap = new Map();
-                let slackTime = 0;
-                let needsMore = [];
-
-                // 第一階段：基礎配額計算
-                topP.forEach(task => {
-                    let initialQuota = (task.tempWeight / adjustedTotalW) * dailyLimit;
-                    if (task.remaining < initialQuota) {
-                        // 計畫用不完配額
-                        quotaMap.set(task.id, task.remaining);
-                        slackTime += (initialQuota - task.remaining);
-                    } else {
-                        // 計畫可能需要更多或剛好
-                        quotaMap.set(task.id, initialQuota);
-                        needsMore.push(task);
-                    }
+                // --- 修正處 1：篩選任務 ---
+                // 1. 剩餘工時必須大於 0
+                // 2. 如果是今天，必須排除掉「今天已經核銷過」的任務 (防止重複分配)
+                let active = simulated.filter(t => {
+                    const hasTimeLeft = t.remaining > 0;
+                    const alreadyVerifiedToday = isToday && t.lastVerifiedDate === todayStr;
+                    return hasTimeLeft && !alreadyVerifiedToday;
                 });
 
-                // 第二階段：重分配閒置時間 (Slack)
-                if (slackTime > 0 && needsMore.length > 0) {
-                    const extraTotalW = needsMore.reduce((s, t) => s + t.tempWeight, 0);
-                    needsMore.forEach(task => {
-                        const extra = (task.tempWeight / extraTotalW) * slackTime;
-                        const newQuota = Math.min(task.remaining, quotaMap.get(task.id) + extra);
-                        quotaMap.set(task.id, newQuota);
+                if (active.length === 0) {
+                    // 如果今天是為了顯示「已核銷」狀態，即便沒有剩餘任務也要繼續執行，讓後續 UI 能抓到
+                    if (!isToday) continue; 
+                }
+
+                if (active.length > 0) {
+                    // 找出最高優先級
+                    const maxP = Math.max(...active.map(t => t.priority));
+                    let topP = active.filter(t => t.priority === maxP);
+
+                    // --- 邏輯 2：計算修正後的權重 ---
+                    const rawTotalW = topP.reduce((s, t) => s + t.weight, 0);
+                    const weightCompensation = rawTotalW < 100 ? (100 - rawTotalW) / topP.length : 0;
+                    
+                    topP.forEach(t => t.tempWeight = t.weight + weightCompensation);
+                    const adjustedTotalW = topP.reduce((s, t) => s + t.tempWeight, 0);
+
+                    // --- 邏輯 4：兩階段時間分配 ---
+                    let quotaMap = new Map();
+                    let slackTime = 0;
+                    let needsMore = [];
+
+                    topP.forEach(task => {
+                        let initialQuota = (task.tempWeight / adjustedTotalW) * dailyLimit;
+                        if (task.remaining < initialQuota) {
+                            quotaMap.set(task.id, task.remaining);
+                            slackTime += (initialQuota - task.remaining);
+                        } else {
+                            quotaMap.set(task.id, initialQuota);
+                            needsMore.push(task);
+                        }
+                    });
+
+                    if (slackTime > 0 && needsMore.length > 0) {
+                        const extraTotalW = needsMore.reduce((s, t) => s + t.tempWeight, 0);
+                        needsMore.forEach(task => {
+                            const extra = (task.tempWeight / extraTotalW) * slackTime;
+                            const newQuota = Math.min(task.remaining, quotaMap.get(task.id) + extra);
+                            quotaMap.set(task.id, newQuota);
+                        });
+                    }
+
+                    // 執行分配並寫入排程
+                    topP.forEach(task => {
+                        let work = quotaMap.get(task.id) || 0;
+                        if (work > 0) {
+                            schedule.push({
+                                date: dStr,
+                                taskId: task.id,
+                                title: task.title,
+                                parent: task.parent,
+                                hours: parseFloat(work.toFixed(1)),
+                                verifiedDate: task.lastVerifiedDate || null
+                            });
+                            task.remaining -= work;
+                            dayRem -= work;
+                        }
                     });
                 }
 
-                // 執行分配並寫入排程
-                topP.forEach(task => {
-                    let work = quotaMap.get(task.id) || 0;
-                    if (work > 0 || (isToday && dailyLimit === 0)) { // 處理今日已無額度的顯示
-                        schedule.push({
-                            date: dStr,
-                            taskId: task.id,
-                            title: task.title,
-                            parent: task.parent,
-                            hours: parseFloat(work.toFixed(1)),
-                            verifiedDate: task.lastVerifiedDate || null
-                        });
-                        task.remaining -= work;
-                        dayRem -= work;
-                    }
-                });
+                // --- 修正處 2：處理「今日已核銷」的顯示數據 ---
+                // 為了讓 UI 能夠在「今日排程」中顯示已核銷的項目，我們需要把已核銷的任務也塞進 schedule 物件
+                if (isToday) {
+                    pool.forEach(t => {
+                        if (t.lastVerifiedDate === todayStr) {
+                            // 檢查是否已經在 schedule 裡（避免重複）
+                            if (!schedule.find(s => s.taskId === t.id && s.date === todayStr)) {
+                                schedule.push({
+                                    date: todayStr,
+                                    taskId: t.id,
+                                    title: t.title,
+                                    parent: t.parent,
+                                    hours: 0, // 核銷後的剩餘建議為 0
+                                    verifiedDate: todayStr
+                                });
+                            }
+                        }
+                    });
+                }
             }
             return schedule;
         }
@@ -858,7 +885,6 @@
 
                 state.todayAvailableHours -= hours;
                 task.lastVerifiedDate = getTodayString();
-
                 addLog(activeGoalId, logMsg);
                 closeModals();
                 persist();
