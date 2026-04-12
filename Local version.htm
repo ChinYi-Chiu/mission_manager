@@ -172,6 +172,17 @@
                     </div>
                     <div id="off-days-tags" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1"></div>
                 </div>
+                <div class="pt-4 border-t space-y-3">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-wider">資料管理</p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="exportData()" class="bg-slate-100 text-slate-700 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition">💾 導出備份</button>
+                        <label class="bg-slate-100 text-slate-700 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition text-center cursor-pointer">
+                            📂 匯入備份
+                            <input type="file" class="hidden" accept=".json" onchange="importData(event)">
+                        </label>
+                    </div>
+                </div>
+
                 <button onclick="saveConfig()" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-100 mt-4">更新並重新規劃</button>
             </div>
         </div>
@@ -234,7 +245,7 @@
 
         // --- 初始化 & 存取 ---
         window.onload = () => {
-            const saved = localStorage.getItem('task_planner_v4_data_v5');
+            const saved = localStorage.getItem('task_planner_data_v1');
             if (saved) state = JSON.parse(saved);
             checkAndResetDailyHours();
             updateDateDisplay();
@@ -242,7 +253,7 @@
         };
 
         function persist() {
-            localStorage.setItem('task_planner_v4_data_v5', JSON.stringify(state));
+            localStorage.setItem('task_planner_data_v1', JSON.stringify(state));
             refreshUI();
             if (activeGoalId) renderDetails(activeGoalId);
         }
@@ -1216,6 +1227,65 @@
         }
 
         function openConfig() { document.getElementById('config-modal').classList.remove('hidden'); }
+
+        //backup & restore
+        const exportData = () => {
+            // 確保導出的是目前的 state 物件
+            const data = {
+                state: state, 
+                version: "4.0",
+                exportAt: new Date().toISOString()
+            };  
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            
+            a.style.display = 'none'; // 隱藏元素
+            a.href = url;
+            a.download = `task_planner_backup_${new Date().toISOString().split('T')[0]}.json`;
+            
+            document.body.appendChild(a); // 必須加入 body 才能在某些瀏覽器觸發
+            a.click();
+            
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        };
+
+        const importData = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    // 檢查匯入格式（適配你的匯出結構）
+                    if (imported && imported.state) {
+                        if (confirm("匯入將覆蓋現有的所有計畫與紀錄，確定要繼續嗎？")) {
+                            // 更新核心 state 物件
+                            state = imported.state;
+                            
+                            // 同步到 LocalStorage 並重繪 UI
+                            persist(); 
+                            updateDateDisplay();
+                            closeModals();
+                            
+                            alert("匯入成功！");
+                        }
+                    } else {
+                        alert("無效的備份檔案格式。");
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("讀取檔案失敗，請確保這是正確的 JSON 備份檔。");
+                }
+                // 清除 input 數值，讓同一個檔案可以重複觸發匯入
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        };
+
     </script>
 </body>
 </html>
