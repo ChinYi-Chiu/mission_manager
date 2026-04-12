@@ -245,7 +245,7 @@
 
         // --- 初始化 & 存取 ---
         window.onload = () => {
-            const saved = localStorage.getItem('task_planner_data_v1');
+            const saved = localStorage.getItem('task_planner_v4_data_v5');
             if (saved) state = JSON.parse(saved);
             checkAndResetDailyHours();
             updateDateDisplay();
@@ -253,7 +253,7 @@
         };
 
         function persist() {
-            localStorage.setItem('task_planner_data_v1', JSON.stringify(state));
+            localStorage.setItem('task_planner_v4_data_v5', JSON.stringify(state));
             refreshUI();
             if (activeGoalId) renderDetails(activeGoalId);
         }
