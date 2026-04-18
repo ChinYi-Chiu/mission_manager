@@ -255,7 +255,17 @@
         function persist() {
             localStorage.setItem('task_planner_data_v1', JSON.stringify(state));
             refreshUI();
-            if (activeGoalId) renderDetails(activeGoalId);
+            if (activeGoalId && state.goals.find(g => g.id === activeGoalId)) {
+                renderDetails(activeGoalId);
+            } else {
+                // 如果目標不見了（剛被刪除），我們應該確保詳情面板被清空或回到列表
+                activeGoalId = null; 
+                const detailsView = document.getElementById('detailsView');
+                const listView = document.getElementById('listView');
+                if (detailsView && !detailsView.classList.contains('hidden')) {
+                    backToList(); // 強制退回列表視圖
+                }
+            }
         }
 
         // 檢查是否跨日，若是則重置今日工時
@@ -1173,8 +1183,13 @@
         }
 
         function deleteActiveGoal() {
-            if (confirm("確定刪除此計畫及其所有紀錄？")) {
-                state.goals = state.goals.filter(x => x.id !== activeGoalId);
+            if (!activeGoalId) return;
+            if (confirm("確定要刪除此目標嗎？此動作無法復原。")) {
+                state.goals = state.goals.filter(g => g.id !== activeGoalId);
+                
+                // 刪除後立刻把腳位清空
+                const deletedId = activeGoalId;
+                activeGoalId = null;
                 closeModals();
                 persist();
             }
