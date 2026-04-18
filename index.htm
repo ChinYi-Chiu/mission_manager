@@ -3,190 +3,608 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>核心規劃器 V6 - Google 雲端整合</title>
+    <title>任務規劃工具</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
-        .glass-nav { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(12px); border-bottom: 1px solid #f1f5f9; }
-        .card-shadow { box-shadow: 0 10px 25px -5px rgba(79, 70, 229, 0.05), 0 8px 10px -6px rgba(79, 70, 229, 0.05); }
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; color: #1e293b; }
+        .modal-animate-in { animation: modalFadeIn 0.2s ease-out; }
+        @keyframes modalFadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        .status-tag { font-size: 10px; font-weight: 900; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; }
-        .log-line { position: relative; padding-left: 20px; }
-        .log-line::before { content: ''; position: absolute; left: 0; top: 8px; width: 8px; height: 8px; border-radius: 50%; background: #6366f1; }
-        .log-line::after { content: ''; position: absolute; left: 3px; top: 20px; width: 2px; height: calc(100% - 10px); background: #f1f5f9; }
-        .log-line:last-child::after { display: none; }
+        
+        .status-overdue { color: #ef4444; } 
+        .status-completed { color: #94a3b8; } 
+        .status-ahead { color: #10b981; } 
+        .node {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            white-space: nowrap;
+            z-index: 10;
+        }
+        #detail-task-tree {
+            min-height: 480px;
+            position: relative;
+        }
     </style>
 </head>
-<body class="min-h-screen pb-20">
-    <!-- 頂部導覽列：OAuth 狀態 -->
-    <nav class="sticky top-0 z-50 glass-nav px-4 py-3 flex justify-between items-center shadow-sm">
-        <div class="flex items-center gap-3">
-            <div id="sync-dot" class="w-2.5 h-2.5 rounded-full bg-slate-300"></div>
-            <span id="sync-status" class="text-[10px] font-black text-slate-400 uppercase tracking-widest">本地儲存模式</span>
-        </div>
-        <div id="auth-actions">
-            <button id="login-btn" onclick="handleAuthClick()" class="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-50 transition active:scale-95">
-                <svg class="w-3 h-3" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-                同步 Google 日曆
-            </button>
-        </div>
-    </nav>
-
-    <main class="max-w-4xl mx-auto p-4 md:p-8">
-        <!-- 標題 -->
-        <header class="mb-10 flex justify-between items-end">
+<body class="min-h-screen pb-24">
+    <div id="app" class="max-w-4xl mx-auto p-4 md:p-8">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8">
             <div>
-                <h1 class="text-3xl font-black tracking-tighter text-slate-900">任務核心規劃器 <span class="text-indigo-600 italic">V6</span></h1>
-                <p id="today-display" class="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest"></p>
+                <h1 class="text-2xl font-black tracking-tight text-slate-900">任務自動規劃系統</h1>
+                <p id="today-info" class="text-sm text-slate-500 font-medium"></p>
             </div>
-            <button onclick="createNewGoal()" class="bg-indigo-600 text-white px-6 py-3 rounded-2xl shadow-xl shadow-indigo-100 font-bold text-sm hover:scale-105 transition-all active:scale-95">新增目標</button>
+            <div class="flex gap-2">
+                <button id="cloudBtn" onclick="handleCloudAction()" class="text-xs font-bold text-slate-500 hover:text-indigo-600 transition text-right">    ☁️ 請登入以使用線上版</button>
+                <button onclick="openConfig()" class="p-2.5 bg-white rounded-xl shadow-sm border border-slate-200 hover:bg-slate-50 transition">⚙️</button>
+                <button onclick="createNewGoal()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-200 font-bold text-sm hover:bg-indigo-700 transition">+ 新目標</button>
+                <button onclick="manualTaskVerification()" class="bg-green-500 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-green-200 font-bold text-sm hover:bg-green-600 transition">手動核銷任務</button>
+            </div>
+
         </header>
 
-        <!-- 本週排程 -->
-        <section class="mb-12">
-            <h2 class="text-lg font-black mb-5 flex items-center gap-2">
-                <span class="w-1.5 h-6 bg-indigo-500 rounded-full"></span>
-                今日與本週排程建議
-            </h2>
-            <div id="weekly-container" class="grid gap-4"></div>
+        <!-- 本週動態排程 -->
+        <section class="mb-10">
+            <div class="flex justify-between items-end mb-4">
+                <h2 class="text-lg font-bold flex items-center gap-2">
+                    📅 本週排程建議 
+                    <span class="bg-indigo-100 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full">動態權重分配</span>
+                </h2>
+                <div id="today-budget-ui" class="text-[11px] font-bold text-slate-400"></div>
+            </div>
+            <div id="weekly-container" class="grid grid-cols-1 gap-4 md:grid-cols-7"></div>
         </section>
 
-        <!-- 目標列表 -->
+        <!-- 目標進度看板 -->
         <section>
-            <h2 class="text-lg font-black mb-5 flex items-center gap-2">
-                <span class="w-1.5 h-6 bg-emerald-400 rounded-full"></span>
-                長期目標進度
-            </h2>
+            <h2 class="text-lg font-bold mb-4 text-slate-800">🏆 目標進度看板</h2>
             <div id="goals-grid" class="grid gap-4 sm:grid-cols-2"></div>
         </section>
-    </main>
+    </div>
 
     <!-- 詳情 Modal -->
     <div id="detail-modal" class="fixed inset-0 bg-slate-900/60 hidden z-50 flex items-center justify-center p-0 md:p-4">
         <div class="bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-3xl md:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
-            <div class="px-6 py-5 border-b flex justify-between items-center sticky top-0 bg-white">
-                <div>
+            <div class="px-6 py-4 border-b flex justify-between items-center bg-white sticky top-0 z-10">
+                <div class="flex items-center gap-3">
                     <h3 id="detail-title" class="text-xl font-black text-slate-900">計畫詳情</h3>
-                    <div id="detail-meta" class="flex gap-2 mt-1"></div>
+                    <span id="detail-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">P5</span>
                 </div>
-                <button onclick="closeModals()" class="text-slate-300 text-4xl leading-none hover:text-slate-500">&times;</button>
+                <div class="flex gap-2">
+                    <button id="detail-edit-btn" class="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition">編輯計畫</button>
+                    <button onclick="closeModals()" class="text-slate-300 text-3xl hover:text-slate-600 transition">&times;</button>
+                </div>
             </div>
+            
             <div class="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-                <div id="detail-stats" class="grid grid-cols-3 gap-4"></div>
+                <div id="detail-stats-grid" class="grid grid-cols-3 gap-4"></div>
                 <div>
-                    <h4 class="font-black text-slate-800 mb-4 flex justify-between">
-                        任務組成
-                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">時數已鎖定</span>
-                    </h4>
-                    <div id="detail-tasks-list" class="space-y-3"></div>
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="font-bold text-slate-800">子任務執行狀態</h4>
+                                <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                            <span>樹狀圖縮放(開發中)</span>
+                            <input disabled id="detail-tree-scale" type="range" min="0.8" max="1.4" step="0.1" value="1" onchange="updateDetailTreeScale(this.value)" class="h-1 w-24 rounded-full bg-slate-200">
+                            <button id="detail-tree-mode-btn" onclick="toggleDetailTreeMode()" class="text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg hover:bg-indigo-100 transition">水平樹</button>
+                        </div>
+                    </div>
+                    <div id="detail-task-tree-wrapper" class="overflow-x-auto">
+                        <div id="detail-task-tree" class="space-y-3" style="font-size:1rem;"></div>
+                    </div>
                 </div>
-                <div class="border-t pt-8">
-                    <h4 class="font-black text-slate-800 mb-6 italic">操作日誌與進度追蹤 (Timeline)</h4>
-                    <div id="detail-logs" class="space-y-1"></div>
+                <div class="border-t pt-6">
+                    <h4 class="font-bold text-slate-800 mb-4">操作日誌 (Activity Logs)</h4>
+                    <div id="detail-logs" class="space-y-3"></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 核銷 Modal -->
-    <div id="log-modal" class="fixed inset-0 bg-slate-900/60 hidden z-[60] flex items-center justify-center p-4">
-        <div class="bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl">
-            <h3 class="text-xl font-black text-center mb-2">工時核銷</h3>
-            <p id="log-context" class="text-xs text-center text-slate-400 font-bold mb-8 uppercase tracking-tighter"></p>
-            <div class="space-y-6">
+    <!-- 編輯目標參數 Modal -->
+    <div id="edit-modal" class="fixed inset-0 bg-slate-900/60 hidden z-[60] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-lg rounded-3xl p-6 shadow-2xl modal-animate-in">
+            <div class="px-6 py-4 border-b flex justify-between items-center bg-white sticky top-0 z-10">
+                <h3 class="text-xl font-black text-slate-900">編輯計畫參數</h3>
+                <button onclick="closeModals()" class="text-slate-300 text-3xl hover:text-slate-600 transition">&times;</button>
+            </div>
+            <div class="space-y-5">
                 <div>
-                    <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block text-center mb-2">投入時數 (h)</label>
-                    <input type="number" id="log-input" step="0.5" class="w-full text-center text-5xl font-black border-b-4 border-indigo-50 py-4 outline-none focus:border-indigo-500 transition-colors">
+                    <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">目標名稱</label>
+                    <input type="text" id="edit-goal-title" class="w-full border-b-2 border-slate-100 py-2 font-bold outline-none focus:border-indigo-500 transition">
                 </div>
-                <button id="log-confirm-btn" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-indigo-100 active:scale-95 transition">確認提交</button>
-                <button onclick="closeModals()" class="w-full text-slate-400 text-sm font-bold">取消</button>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">優先級 (數字越大越重要)</label>
+                        <input type="number" id="edit-goal-priority" min="1" max="5" class="w-full bg-slate-50 p-3 rounded-xl mt-1 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">權重 (%)</label>
+                        <input type="number" id="edit-goal-weight" class="w-full bg-slate-50 p-3 rounded-xl mt-1 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider">截止日期</label>
+                    <input type="date" id="edit-goal-deadline" class="w-full bg-slate-50 p-3 rounded-xl mt-1 outline-none">
+                </div>
+                <div class="pt-4 border-t">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="text-xs font-bold text-slate-400">管理任務樹</span>
+                        <button onclick="addRootTask()" class="text-indigo-600 text-xs font-bold bg-indigo-50 px-2 py-1 rounded-lg">+ 新增子任務</button>
+                    </div>
+                    <div id="tree-root" class="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-2"></div>
+                </div>
+                <div class="flex gap-3 pt-4">
+                    <button onclick="deleteActiveGoal()" class="text-red-400 font-bold px-4 hover:text-red-600">刪除目標</button>
+                    <button onclick="saveActiveGoal()" class="flex-1 bg-slate-900 text-white py-3.5 rounded-2xl font-bold shadow-lg">儲存變更</button>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- SDKs -->
-    <script src="https://accounts.google.com/gsi/client"></script>
-    <script src="https://apis.google.com/js/api.js"></script>
+    <!-- 設定 Modal -->
+    <div id="config-modal" class="fixed inset-0 bg-slate-900/60 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 modal-animate-in">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold">排程偏好設定</h3>
+                <button onclick="closeModals()" class="text-slate-400 text-2xl">&times;</button>
+            </div>
+            <div class="space-y-5">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">每日專注工時</label>
+                        <input type="number" id="cfg-daily-hours" step="0.5" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 ring-indigo-500/20">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">時區設定</label>
+                        <select id="cfg-timezone" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 ring-indigo-500/20">
+                            <option value="UTC">UTC (格林威治)</option>
+                            <option value="Asia/Taipei">UTC+8 (台北/北京)</option>
+                            <option value="Asia/Tokyo">UTC+9 (東京)</option>
+                            <option value="America/New_York">UTC-5 (紐約)</option>
+                            <option value="Europe/London">UTC+0 (倫敦)</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-2">已排除休息日</label>
+                    <div class="flex gap-2 mb-3">
+                        <input type="date" id="cfg-off-date" class="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-2 text-sm outline-none">
+                        <button onclick="addOffDay()" class="bg-slate-800 text-white px-4 py-2 rounded-xl text-sm font-bold">新增</button>
+                    </div>
+                    <div id="off-days-tags" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1"></div>
+                </div>
+                <div class="pt-4 border-t space-y-3">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-wider">資料管理</p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="exportData()" class="bg-slate-100 text-slate-700 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition">💾 導出備份</button>
+                        <label class="bg-slate-100 text-slate-700 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition text-center cursor-pointer">
+                            📂 匯入備份
+                            <input type="file" class="hidden" accept=".json" onchange="importData(event)">
+                        </label>
+                    </div>
+                </div>
 
-    <script>
-        // --- 設定 (請填入你的 Client ID) ---
-        const CLIENT_ID = '687028778487-dmauf1pac18283b565fvfgg1au3kjc21.apps.googleusercontent.com'; 
-        const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-        const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
+                <button onclick="saveConfig()" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-100 mt-4">更新並重新規劃</button>
+            </div>
+        </div>
+    </div>
 
-        let tokenClient;
-        let gapiInited = false;
-        let state = { goals: [], dailyMaxHours: 6, lastId: 0 };
+    <!-- 核銷工時彈窗 -->
+    <div id="log-modal" class="fixed inset-0 bg-slate-900/60 hidden z-[70] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl modal-animate-in text-center">
+            <h3 class="text-lg font-bold mb-1">工時核銷</h3>
+            <p id="log-task-title" class="text-xs text-slate-400 mb-6 font-medium"></p>
+            <div class="space-y-5">
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">本次完成時數 (h)</label>
+                    <input type="number" id="log-hours-input" step="0.5" class="w-full text-center text-3xl font-black border-2 border-indigo-50 rounded-2xl p-4 outline-none focus:border-indigo-500 transition">
+                </div>
+                <button id="log-confirm-btn" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-xl shadow-indigo-100">確認核銷</button>
+                <button onclick="closeModals()" class="text-slate-400 text-sm font-bold">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 手動核銷 Modal -->
+    <div id="manual-log-modal" class="fixed inset-0 bg-slate-900/60 hidden z-[75] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl modal-animate-in text-center">
+            <h3 class="text-lg font-bold mb-1">手動核銷任務</h3>
+            <div class="space-y-5 text-left">
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">選擇計畫</label>
+                    <select id="manual-goal-select" onchange="renderManualTaskOptions()" class="w-full bg-slate-50 p-3 rounded-2xl outline-none"></select>
+                </div>
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">選擇末端子任務</label>
+                    <select id="manual-task-select" class="w-full bg-slate-50 p-3 rounded-2xl outline-none"></select>
+                </div>
+                <div>
+                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">本次完成時數 (h)</label>
+                    <input type="number" id="manual-log-hours" step="0.5" class="w-full bg-slate-50 p-3 rounded-2xl text-center font-black outline-none" value="1">
+                </div>
+                <button onclick="confirmManualVerification()" class="w-full bg-green-500 text-white py-4 rounded-2xl font-bold shadow-xl shadow-green-100">確認核銷</button>
+                <button onclick="closeModals()" class="text-slate-400 text-sm font-bold">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // --- Firebase 雲端同步模組 ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB0POskd5j5Sy_RuEVJacTfJj8MoztunJk",
+            authDomain: "testmsmg.firebaseapp.com",
+            projectId: "testmsmg",
+            storageBucket: "testmsmg.firebasestorage.app",
+            messagingSenderId: "182763769337",
+            appId: "1:182763769337:web:673693b9d01d95665d8128",
+            measurementId: "G-MSVJHQMSGG"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const provider = new GoogleAuthProvider();
+
+        let currentUser = null;
+        
+        // 視窗點擊關閉邏輯
+        window.onclick = function(event) {
+            const modals = ['goalModal', 'configModal'];
+            modals.forEach(id => {
+                const modal = document.getElementById(id);
+                if (event.target == modal) {
+                    closeModals();
+                }
+            });
+        };
+
+        // 登入功能
+        window.login = () => {
+            signInWithPopup(auth, provider).catch(err => console.error("登入失敗", err));
+        };
+
+        // 登出功能
+        window.logout = () => {
+            signOut(auth).then(() => {
+                currentUser = null;
+                location.reload(); // 登出後刷新頁面
+            });
+        };
+        const cloudBtn = document.getElementById('cloudBtn');
+
+        // 統一按鈕行為：沒登入就登入，有登入就詢問登出
+        window.handleCloudAction = () => {
+            if (!currentUser) {
+                window.login();
+            } else {
+                if (confirm(`${currentUser.displayName}，您確定要登出並切換回離線模式嗎？`)) {
+                    window.logout();
+                }
+            }
+        };
+
+        // 監聽登入狀態並自動同步
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                // 變更按鈕顯示內容 (使用 \n 換行需要 CSS white-space: pre-line)
+                cloudBtn.style.whiteSpace = 'pre-line';
+                cloudBtn.innerText = `☁️ 雲端同步中\n${user.displayName}，歡迎`;
+                cloudBtn.classList.remove('text-slate-500');
+                cloudBtn.classList.add('text-indigo-600');
+                console.log("已登入:", user.displayName);
+                // 更新 UI 顯示登入狀態 (選做)
+                document.getElementById('today-info').innerHTML += ` | 👤 ${user.displayName}`;
+                
+                // 同步雲端資料... (原本的 getDoc 邏輯)
+                const docRef = doc(db, "user_planner", user.uid);
+                try {
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) {
+                        const cloudData = docSnap.data().state;
+                        const localData = JSON.parse(localStorage.getItem('task_planner_data_v1'));
+                        if (!localData || cloudData.timestamp > (localData.timestamp || 0)) {
+                            if (confirm("發現雲端有更新的資料，是否載入？")) {
+                                state = cloudData;
+                                persist(true); // 傳入 true 避免回寫雲端形成死循環
+                            }
+                        }
+                    }
+                } catch (e) { console.error("同步失敗", e); }
+                
+            } else {
+                currentUser = null;
+                cloudBtn.innerText = "☁️ 請登入以使用線上版";
+                cloudBtn.classList.add('text-slate-500');
+                cloudBtn.classList.remove('text-indigo-600');
+            }
+        });
+
+        // --- 核心狀態 ---
+        let state = {
+            goals: [],
+            offDays: [],
+            dailyMaxHours: 3,
+            todayAvailableHours: 3, // 當日剩餘可用
+            lastUpdateDate: "",     // 上次更新工時的日期
+            timezone: "Asia/Taipei",
+            lastId: 0
+        };
         let activeGoalId = null;
+        let isNewGoalEdit = false;
+        let detailTreeScale = 1;
+        let detailTreeMode = 'vertical';
 
-        // --- 初始化 ---
+        // --- 初始化 & 存取 ---
         window.onload = () => {
-            const saved = localStorage.getItem('task_planner_v6_full');
+            const saved = localStorage.getItem('task_planner_data_v1');
             if (saved) state = JSON.parse(saved);
-            
-            document.getElementById('today-display').innerText = new Date().toLocaleDateString('zh-TW', { dateStyle: 'full' });
-            
-            initOAuth();
+            checkAndResetDailyHours();
+            updateDateDisplay();
             refreshUI();
         };
 
-        function initOAuth() {
-            if (!CLIENT_ID) return;
-            gapi.load('client', async () => {
-                await gapi.client.init({ discoveryDocs: [DISCOVERY_DOC] });
-                gapiInited = true;
-            });
-            tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: CLIENT_ID,
-                scope: SCOPES,
-                callback: (resp) => { if (resp.access_token) onAuthSuccess(); }
-            });
-        }
-
-        function handleAuthClick() {
-            if (!CLIENT_ID) return alert("請先填入 Client ID");
-            if (window.location.protocol === 'file:') return alert("Google 不支援 file:// 開啟，請上傳至 GitHub Pages。");
-            tokenClient.requestAccessToken({ prompt: 'consent' });
-        }
-
-        function onAuthSuccess() {
-            document.getElementById('sync-dot').className = "w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]";
-            document.getElementById('sync-status').innerText = "已連結 Google 日曆";
-            document.getElementById('sync-status').classList.replace('text-slate-400', 'text-emerald-600');
-            document.getElementById('login-btn').classList.add('hidden');
-        }
-
-        // --- 核心業務邏輯 ---
-        function persist() {
-            localStorage.setItem('task_planner_v6_full', JSON.stringify(state));
+        // 修改後的 persist 函數
+        async function persist(skipCloud = false) {
+            // 加上時間戳記以便比對
+            state.timestamp = new Date().getTime();
+            
+            localStorage.setItem('task_planner_data_v1', JSON.stringify(state));
             refreshUI();
+            // 3. 【關鍵修復】檢查當前啟動的目標是否還活著
+            // 如果目標已被刪除，activeGoalId 會對應到 undefined，這時不應執行 renderDetails
+            if (activeGoalId && state.goals.find(g => g.id === activeGoalId)) {
+                renderDetails(activeGoalId);
+            } else {
+                // 如果目標不見了（剛被刪除），我們應該確保詳情面板被清空或回到列表
+                activeGoalId = null; 
+                const detailsView = document.getElementById('detailsView');
+                const listView = document.getElementById('listView');
+                if (detailsView && !detailsView.classList.contains('hidden')) {
+                    backToList(); // 強制退回列表視圖
+                }
+            }
+
+            // 只有在非跳過模式且有登入時才上傳
+            if (!skipCloud && currentUser) {
+                try {
+                    await setDoc(doc(db, "user_planner", currentUser.uid), {
+                        state: state,
+                        timestamp: state.timestamp,
+                        updatedAt: new Date().toISOString()
+                    });
+                    console.log("雲端同步成功");
+                } catch (e) {
+                    console.error("雲端同步失敗", e);
+                }
+            }
+        }
+
+        function loginAndSync() {
+            const provider = new GoogleAuthProvider();
+            signInWithPopup(auth, provider).then(async (result) => {
+                currentUser = result.user;
+                
+                // 從雲端抓取 JSON
+                const docRef = doc(db, "user_configs", currentUser.uid);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const cloudData = docSnap.data().state;
+                    // 簡單比對：直接以雲端為準 (或加入時間戳比對)
+                    state = cloudData;
+                    localStorage.setItem('task_planner_data_v1', JSON.stringify(state));
+                    refreshUI();
+                    alert("雲端資料已同步！");
+                }
+            });
+        }
+
+        // 檢查是否跨日，若是則重置今日工時
+        function checkAndResetDailyHours() {
+            const todayStr = getTodayString();
+            if (state.lastUpdateDate !== todayStr) {
+                state.todayAvailableHours = state.dailyMaxHours;
+                state.lastUpdateDate = todayStr;
+                // 注意：這裡不主動 persist，交給後續操作
+            }
+        }
+
+        function getTodayString() {
+            const options = { timeZone: state.timezone, year: 'numeric', month: '2-digit', day: '2-digit' };
+            const formatter = new Intl.DateTimeFormat('en-CA', options);
+            return formatter.format(new Date());
         }
 
         function refreshUI() {
             renderGoalCards();
             renderWeeklyPlanner();
+            renderOffDayTags();
+            document.getElementById('cfg-daily-hours').value = state.dailyMaxHours;
+            document.getElementById('cfg-timezone').value = state.timezone;
+            document.getElementById('today-budget-ui').innerText = `今日可用餘額: ${state.todayAvailableHours.toFixed(1)}h / ${state.dailyMaxHours}h`;
         }
 
+        function updateDateDisplay() {
+            const now = new Date();
+            const dateStr = now.toLocaleDateString('zh-TW', { 
+                timeZone: state.timezone, 
+                month: 'long', day: 'numeric', weekday: 'long' 
+            });
+            document.getElementById('today-info').innerText = `${dateStr} (${state.timezone.split('/').pop()})`;// 每次更新日期顯示時也檢查是否需要重置工時
+        }
+
+        // --- 排程演算法 ---
+        function calculateSchedule() {
+            const todayStr = getTodayString();
+            let pool = [];
+            // 每個計畫現在只會貢獻一個任務進入 pool
+            state.goals.forEach(g => collectActiveLeaves(g, g.title, g.priority, g.weight, pool));
+
+            const schedule = [];
+            // 建立模擬用的剩餘時間副本
+            const simulated = pool.map(t => ({ ...t, remaining: Math.max(0, (t.targetHours || 0) - (t.doneHours || 0)) }));
+            const availableToday = Math.max(0, state.todayAvailableHours);
+
+            for (let i = 0; i < 7; i++) {
+                const dStr = getOffsetDateString(i);
+                if (state.offDays.includes(dStr)) continue;
+
+                const isToday = (dStr === todayStr);
+                let dayRem = isToday ? availableToday : state.dailyMaxHours;
+                const dailyLimit = dayRem;
+
+                // --- 修正處 1：篩選任務 ---
+                // 1. 剩餘工時必須大於 0
+                // 2. 如果是今天，必須排除掉「今天已經核銷過」的任務 (防止重複分配)
+                let active = simulated.filter(t => {
+                    const hasTimeLeft = t.remaining > 0;
+                    const alreadyVerifiedToday = isToday && t.lastVerifiedDate === todayStr;
+                    return hasTimeLeft && !alreadyVerifiedToday;
+                });
+
+                if (active.length === 0) {
+                    // 如果今天是為了顯示「已核銷」狀態，即便沒有剩餘任務也要繼續執行，讓後續 UI 能抓到
+                    if (!isToday) continue; 
+                }
+
+                if (active.length > 0) {
+                    // 找出最高優先級
+                    const maxP = Math.max(...active.map(t => t.priority));
+                    let topP = active.filter(t => t.priority === maxP);
+
+                    // --- 邏輯 2：計算修正後的權重 ---
+                    const rawTotalW = topP.reduce((s, t) => s + t.weight, 0);
+                    const weightCompensation = rawTotalW < 100 ? (100 - rawTotalW) / topP.length : 0;
+                    
+                    topP.forEach(t => t.tempWeight = t.weight + weightCompensation);
+                    const adjustedTotalW = topP.reduce((s, t) => s + t.tempWeight, 0);
+
+                    // --- 邏輯 4：兩階段時間分配 ---
+                    let quotaMap = new Map();
+                    let slackTime = 0;
+                    let needsMore = [];
+
+                    topP.forEach(task => {
+                        let initialQuota = (task.tempWeight / adjustedTotalW) * dailyLimit;
+                        if (task.remaining < initialQuota) {
+                            quotaMap.set(task.id, task.remaining);
+                            slackTime += (initialQuota - task.remaining);
+                        } else {
+                            quotaMap.set(task.id, initialQuota);
+                            needsMore.push(task);
+                        }
+                    });
+
+                    if (slackTime > 0 && needsMore.length > 0) {
+                        const extraTotalW = needsMore.reduce((s, t) => s + t.tempWeight, 0);
+                        needsMore.forEach(task => {
+                            const extra = (task.tempWeight / extraTotalW) * slackTime;
+                            const newQuota = Math.min(task.remaining, quotaMap.get(task.id) + extra);
+                            quotaMap.set(task.id, newQuota);
+                        });
+                    }
+
+                    // 執行分配並寫入排程
+                    topP.forEach(task => {
+                        let work = quotaMap.get(task.id) || 0;
+                        if (work > 0) {
+                            schedule.push({
+                                date: dStr,
+                                taskId: task.id,
+                                title: task.title,
+                                parent: task.parent,
+                                hours: parseFloat(work.toFixed(1)),
+                                verifiedDate: task.lastVerifiedDate || null
+                            });
+                            task.remaining -= work;
+                            dayRem -= work;
+                        }
+                    });
+                }
+
+                // --- 修正處 2：處理「今日已核銷」的顯示數據 ---
+                // 為了讓 UI 能夠在「今日排程」中顯示已核銷的項目，我們需要把已核銷的任務也塞進 schedule 物件
+                if (isToday) {
+                    pool.forEach(t => {
+                        if (t.lastVerifiedDate === todayStr) {
+                            // 檢查是否已經在 schedule 裡（避免重複）
+                            if (!schedule.find(s => s.taskId === t.id && s.date === todayStr)) {
+                                schedule.push({
+                                    date: todayStr,
+                                    taskId: t.id,
+                                    title: t.title,
+                                    parent: t.parent,
+                                    hours: 0, // 核銷後的剩餘建議為 0
+                                    verifiedDate: todayStr
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+            return schedule;
+        }
+
+        function getOffsetDateString(offset) {
+            const d = new Date();
+            d.setDate(d.getDate() + offset);
+            const options = { timeZone: state.timezone, year: 'numeric', month: '2-digit', day: '2-digit' };
+            const formatter = new Intl.DateTimeFormat('en-CA', options);
+            return formatter.format(d);
+        }
+
+        // 修改後的函數：一個計畫只抓一個任務
+        function collectActiveLeaves(node, pName, priority, weight, result) {
+            if (node.completed) return false; // 已完成，跳過
+
+            // 如果是末端子任務
+            if (!node.children || node.children.length === 0) {
+                if (node.targetHours > node.doneHours) {
+                    result.push({ ...node, parent: pName, priority, weight });
+                    return true; // 找到第一個未完成，回傳 true 終止後續同級搜尋
+                }
+                return false;
+            } else {
+                // 遍歷子節點，只要其中一個子節點找到了任務，就停止遍歷其他兄弟節點
+                for (let child of node.children) {
+                    const found = collectActiveLeaves(child, pName, priority, weight, result);
+                    if (found) return true; 
+                }
+                return false;
+            }
+        }
+
+        // --- UI 渲染 ---
         function renderGoalCards() {
             const grid = document.getElementById('goals-grid');
             grid.innerHTML = '';
             state.goals.forEach(g => {
-                const s = getStats(g);
-                const progress = s.target === 0 ? 0 : Math.round((s.done / s.target) * 100);
+                const stats = getGoalStats(g);
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
                 grid.innerHTML += `
-                    <div onclick="openDetails(${g.id})" class="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-md transition cursor-pointer">
+                    <div onclick="openDetails(${g.id})" class="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition group">
                         <div class="flex justify-between items-start mb-4">
-                            <h4 class="font-black text-slate-800 leading-tight">${g.title}</h4>
-                            <span class="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">P${g.priority}</span>
+                            <div>
+                                <h4 class="font-black text-slate-800 text-lg group-hover:text-indigo-600 transition">${g.title}</h4>
+                                <div class="flex gap-2 mt-1.5">
+                                    <span class="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-100 text-slate-400">P${g.priority}</span>
+                                    <span class="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-400">${g.weight}% 權重</span>
+                                </div>
+                            </div>
+                            <span class="text-sm font-black text-indigo-600">${progress}%</span>
                         </div>
-                        <div class="w-full bg-slate-50 h-2 rounded-full overflow-hidden mb-3">
-                            <div class="bg-indigo-500 h-full transition-all duration-700" style="width: ${progress}%"></div>
+                        <div class="w-full bg-slate-50 h-2 rounded-full overflow-hidden">
+                            <div class="bg-indigo-500 h-full transition-all duration-700 ease-out" style="width: ${progress}%"></div>
                         </div>
-                        <div class="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                            <span>已達成 ${progress}%</span>
-                            <span>${s.done.toFixed(1)} / ${s.target.toFixed(1)} h</span>
+                        <div class="mt-4 flex justify-between items-center text-[10px] font-bold text-slate-400">
+                            <span>截止: ${g.deadline || '未定'}</span>
+                            <span class="text-slate-500">已完成 ${stats.done.toFixed(1)} / ${stats.target.toFixed(1)} h</span>
                         </div>
                     </div>
                 `;
@@ -195,243 +613,888 @@
 
         function renderWeeklyPlanner() {
             const container = document.getElementById('weekly-container');
-            const schedule = calculateSchedule();
+            const sched = calculateSchedule();
             container.innerHTML = '';
+            container.className = 'flex flex-col gap-4';
 
-            const groups = {};
-            schedule.forEach(s => { if(!groups[s.date]) groups[s.date] = []; groups[s.date].push(s); });
-            
-            Object.keys(groups).sort().forEach(date => {
-                const isToday = date === new Date().toISOString().split('T')[0];
+            const tasksByDate = {};
+            sched.forEach(s => { if (!tasksByDate[s.date]) tasksByDate[s.date] = []; tasksByDate[s.date].push(s); });
+
+            const todayStr = getTodayString();
+            const dayLabels = ['日','一','二','三','四','五','六'];
+
+            for (let i = 0; i < 7; i++) {
+                const date = getOffsetDateString(i);
+                const tasks = tasksByDate[date] || [];
+                const isToday = date === todayStr;
+                const isOff = state.offDays.includes(date);
+                const d = parseDateString(date);
+                const dayName = dayLabels[d.getDay()];
+
                 let html = `
-                    <div class="p-6 rounded-[2rem] border ${isToday ? 'bg-indigo-50/40 border-indigo-100' : 'bg-white border-slate-100 shadow-sm'}">
-                        <p class="text-[10px] font-black text-slate-400 mb-4 uppercase tracking-[0.2em]">${date} ${isToday ? '• TODAY' : ''}</p>
-                        <div class="space-y-4">`;
-                groups[date].forEach(t => {
-                    html += `
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-3">
-                                <button onclick="openLogModal(${t.taskId}, '${t.title}', ${t.hours})" class="w-6 h-6 rounded-lg border-2 border-slate-200 bg-white hover:border-indigo-500 transition active:scale-90"></button>
-                                <span class="text-sm font-bold text-slate-700">${t.title}</span>
+                    <div class="p-4 rounded-3xl border ${isToday ? 'bg-indigo-50/50 border-indigo-100 ring-1 ring-indigo-500/10' : 'bg-white border-slate-100 shadow-sm'}">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <p class="text-xs font-black uppercase tracking-widest ${isToday ? 'text-indigo-600' : 'text-slate-400'}">${dayName} ${date}</p>
+                                ${isToday ? '<p class="text-[10px] text-indigo-500 font-bold">• 今天</p>' : ''}
                             </div>
-                            <span class="text-xs font-black text-slate-400 tabular-nums">${t.hours}h</span>
-                        </div>`;
-                });
+                            <p class="text-[10px] font-bold text-slate-400">${tasks.reduce((sum, t) => sum + t.hours, 0).toFixed(1)}h</p>
+                        </div>
+                        ${isOff ? '<div class="rounded-2xl bg-slate-50 p-3 text-[10px] text-slate-500 font-bold">休息日</div>' : ''}
+                        <div class="space-y-3">
+                `;
+
+                if (tasks.length === 0) {
+                    html += `
+                        <div class="rounded-2xl bg-slate-50 p-3 text-[10px] text-slate-500">尚無排程</div>
+                    `;
+                } else {
+                    tasks.forEach(t => {
+                        const isVerified = isToday && t.verifiedDate === date;
+                        const isClickable = isToday && !isVerified;
+                        const btnClasses = isClickable ? 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-white flex items-center justify-center hover:border-indigo-500 transition-colors' : 'w-6 h-6 rounded-lg border-2 border-slate-200 bg-slate-100 text-slate-400 flex items-center justify-center cursor-not-allowed';
+                        const btnProps = isClickable ? `onclick="openLogHours(${t.taskId}, '${t.title}', ${t.hours})"` : 'disabled';
+
+                        html += `
+                            <div class="flex items-center justify-between gap-3 p-3 bg-white border border-slate-100 rounded-3xl">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span style="display:${isVerified ? 'block' : 'none'}" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-500 text-white">${isVerified ? '已核銷' : ''}</span>
+                                    </div>
+                                    <p class="text-sm font-bold text-slate-700 truncate">${t.title}</p>
+                                    <p class="text-[9px] text-slate-400 truncate">${t.parent}</p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-black ${isVerified ? 'text-green-600' : t.hours === 0 && isToday ? 'text-red-400' : 'text-slate-500'} tabular-nums">${isVerified ? '已核銷' : t.hours + 'h'}</span>
+                                    <button ${btnProps} class="${btnClasses}">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-slate-100"></div>
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+
                 html += `</div></div>`;
                 container.innerHTML += html;
+            }
+        }
+
+        // --- 詳情視窗功能 ---
+        function openDetails(id) {
+            activeGoalId = id;
+            renderDetails(id);
+            document.getElementById('detail-modal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function renderDetails(id) {
+            const g = state.goals.find(x => x.id === id);
+            const stats = getGoalStats(g);
+            const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+
+            document.getElementById('detail-title').innerText = g.title;
+            document.getElementById('detail-badge').innerText = `P${g.priority} | ${g.weight}% 權重`;
+
+            document.getElementById('detail-stats-grid').innerHTML = `
+                <div class="bg-slate-50 p-4 rounded-2xl text-center">
+                    <p class="text-[10px] font-black text-slate-400 uppercase mb-1">原始預計總工時</p>
+                    <p class="text-xl font-black text-slate-700">${stats.target.toFixed(1)}h</p>
+                </div>
+                <div class="bg-indigo-50 p-4 rounded-2xl text-center">
+                    <p class="text-[10px] font-black text-indigo-400 uppercase mb-1">目前核銷進度</p>
+                    <p class="text-xl font-black text-indigo-600">${progress}%</p>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-2xl text-center">
+                    <p class="text-[10px] font-black text-slate-400 uppercase mb-1">剩餘應完成</p>
+                    <p class="text-xl font-black text-slate-700">${(stats.target - stats.done).toFixed(1)}h</p>
+                </div>
+            `;
+
+            document.getElementById('detail-tree-scale').value = detailTreeScale;
+            updateDetailTreeScale(detailTreeScale);
+            renderDetailTaskTree(g);
+
+            const logsDiv = document.getElementById('detail-logs');
+            logsDiv.innerHTML = (g.logs || []).slice().reverse().map(l => `
+                <div class="flex gap-3 items-start group">
+                    <div class="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0"></div>
+                    <div class="flex-1">
+                        <p class="text-xs font-bold text-slate-700 leading-relaxed">${l.msg}</p>
+                        <p class="text-[9px] text-slate-400 font-medium mt-0.5">${l.time}</p>
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('detail-edit-btn').onclick = () => openEditGoal(id);
+        }
+
+        // --- 工時核銷功能 (引入 Available Hours 扣除) ---
+        function parseDateString(date) {
+            const [year, month, day] = date.split('-');
+            return new Date(parseInt(year), parseInt(month, 10) - 1, parseInt(day, 10));
+        }
+
+        function updateDetailTreeScale(value) {
+            detailTreeScale = parseFloat(value) || 1;
+            const tree = document.getElementById('detail-task-tree');
+            if (tree) tree.style.fontSize = detailTreeScale + 'rem';
+        }
+
+        function toggleDetailTreeMode() {
+            detailTreeMode = detailTreeMode === 'vertical' ? 'horizontal' : 'vertical';
+            const btn = document.getElementById('detail-tree-mode-btn');
+            if (btn) btn.innerText = detailTreeMode === 'horizontal' ? '垂直樹' : '水平樹';
+            if (activeGoalId) {
+                const goal = state.goals.find(g => g.id === activeGoalId);
+                if (goal) renderDetailTaskTree(goal);
+            }
+        }
+
+        function generateHorizontalTreeHTML(nodes) {
+            if (!nodes || nodes.length === 0) {
+                return `<div class="py-10 text-center text-slate-500">尚無子任務可顯示</div>`;
+            }
+
+            const spacingX = 260;
+            const spacingY = 120;
+            let nextX = 0;
+            const positions = new Map();
+            const allNodes = [];
+
+            function computeLayout(node, depth) {
+                const y = 80 + depth * spacingY;
+                allNodes.push(node);
+
+                if (!node.children || node.children.length === 0) {
+                    const x = nextX || spacingX;
+                    nextX = x + spacingX;
+                    positions.set(node, { x, y });
+                    return { min: x, max: x };
+                }
+
+                const childRanges = node.children.map(child => computeLayout(child, depth + 1));
+                const x = (childRanges[0].min + childRanges[childRanges.length - 1].max) / 2;
+                positions.set(node, { x, y });
+                return { min: childRanges[0].min, max: childRanges[childRanges.length - 1].max };
+            }
+
+            nodes.forEach(node => computeLayout(node, 0));
+            const width = Math.max(nextX + spacingX, 600);
+            const height = Math.max(...Array.from(positions.values()).map(p => p.y)) + spacingY;
+
+            const linePaths = [];
+            function buildPaths(node) {
+                if (!node.children || node.children.length === 0) return;
+                const parent = positions.get(node);
+                node.children.forEach(child => {
+                    const childPos = positions.get(child);
+                    const curve = Math.max(40, Math.abs(childPos.x - parent.x) * 0.3);
+                    const d = `M ${parent.x} ${parent.y + 24} C ${parent.x} ${parent.y + curve}, ${childPos.x} ${childPos.y - curve}, ${childPos.x} ${childPos.y - 24}`;
+                    linePaths.push(`<path d="${d}" stroke="#334155" stroke-width="2" fill="none" stroke-linecap="round" />`);
+                    buildPaths(child);
+                });
+            }
+            nodes.forEach(buildPaths);
+
+            const nodesHTML = allNodes.map(node => {
+                const { x, y } = positions.get(node);
+                const stats = getGoalStats(node);
+                const isLeaf = !node.children || node.children.length === 0;
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+                const statusTags = [];
+                if (node.completed) statusTags.push(`<span class="bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">已完成</span>`);
+                if (node.isExtended) statusTags.push(`<span class="bg-red-50 text-red-500 px-1.5 py-0.5 rounded ml-1">已延長工時</span>`);
+                if (node.isEarly) statusTags.push(`<span class="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded ml-1">超前 ${node.earlyHours}h</span>`);
+                if (node.isOverrun) statusTags.push(`<span class="bg-yellow-50 text-amber-600 px-1.5 py-0.5 rounded ml-1">已超過計畫工時</span>`);
+
+                return `
+                    <div class="absolute node" style="left:${x}px; top:${y}px;">
+                        <div class="p-3 bg-white border-2 border-slate-300 rounded-2xl shadow-sm ${node.completed ? 'opacity-70' : ''}">
+                            <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-900'}">${node.title}${statusTags.join('')}</p>
+                            <div class="mt-2 text-[10px] text-slate-500">
+                                <span>${stats.done.toFixed(1)} / ${stats.target.toFixed(1)}h</span>
+                                <span class="ml-2">${progress}%</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="relative overflow-visible" style="min-height:${height}px; min-width:${width}px;">
+                    <svg width="${width}" height="${height}" class="absolute inset-0 pointer-events-none">
+                        ${linePaths.join('')}
+                    </svg>
+                    ${nodesHTML}
+                </div>
+            `;
+        }
+
+        function renderDetailTaskTree(goal) {
+            const container = document.getElementById('detail-task-tree');
+            if (!container) return;
+            if (detailTreeMode === 'horizontal') {
+                container.innerHTML = generateHorizontalTreeHTML([goal]);
+            } else {
+                container.innerHTML = generateDetailTreeHTML(goal.children || [], 0);
+            }
+        }
+
+        function generateDetailTreeHTML(nodes, depth) {
+            return nodes.map(node => {
+                const stats = getGoalStats(node);
+                const isLeaf = !node.children || node.children.length === 0;
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+                const isDone = node.completed;
+                let statusTags = '';
+                if (node.completed) statusTags += `<span class="bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">已完成</span>`;
+                if (node.isExtended) statusTags += `<span class="bg-red-50 text-red-500 px-1.5 py-0.5 rounded ml-1">已延長工時</span>`;
+                if (node.isEarly) statusTags += `<span class="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded ml-1">超前 ${node.earlyHours}h</span>`;
+                if (node.isOverrun) statusTags += `<span class="bg-yellow-50 text-amber-600 px-1.5 py-0.5 rounded ml-1">已超過計畫工時</span>`;
+
+                return `
+                    <div class="pl-${depth * 4} border-l-2 border-slate-100">
+                        <div class="p-4 bg-white rounded-3xl shadow-sm ${node.completed ? 'opacity-70' : ''}">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <p class="text-sm font-bold ${node.completed ? 'status-completed line-through' : 'text-slate-700'}">${node.title}</p>
+                                    <div class="flex flex-wrap items-center gap-2 mt-2 text-[10px] text-slate-500">
+                                        <span>${stats.done.toFixed(1)} / ${stats.target.toFixed(1)} h</span>
+                                        <span>${progress}%</span>
+                                        ${isLeaf ? '<span class="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">末端</span>' : '<span class="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">父節點</span>'}
+                                        ${statusTags}
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    ${!isDone&&isLeaf ? `
+                                        <button onclick="markEarly(${node.id})" class="text-emerald-600 bg-emerald-50 text-[10px] font-bold px-3 py-1.5 rounded-xl hover:bg-emerald-100 transition">超前完成</button>
+                                        <button onclick="extendHours(${node.id})" class="text-red-500 bg-red-50 text-[10px] font-bold px-3 py-1.5 rounded-xl hover:bg-red-100 transition">延長工時</button>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        </div>
+                        ${node.children ? generateDetailTreeHTML(node.children, depth + 1) : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function manualTaskVerification() {
+            if (!state.goals || state.goals.length === 0) {
+                alert('請先建立計畫後再進行手動核銷。');
+                return;
+            }
+            renderManualGoalOptions();
+            document.getElementById('manual-log-modal').classList.remove('hidden');
+        }
+
+        function renderManualGoalOptions() {
+            const select = document.getElementById('manual-goal-select');
+            const availableGoals = state.goals.filter(g => {
+                const leaves = [];
+                collectIncompleteLeafNodes(g, leaves);
+                return leaves.length > 0;
             });
 
-            if (schedule.length === 0) {
-                container.innerHTML = `<div class="py-12 text-center text-slate-300 font-bold italic border-2 border-dashed border-slate-100 rounded-[2rem]">目前沒有待辦任務，請新增目標或子任務。</div>`;
+            if (availableGoals.length === 0) {
+                select.innerHTML = `<option value="">無可核銷的計畫</option>`;
+                select.disabled = true;
+                renderManualTaskOptions();
+                return;
             }
+
+            select.disabled = false;
+            select.innerHTML = availableGoals.map(g => {
+                const stats = getGoalStats(g);
+                const progress = stats.target === 0 ? 0 : Math.round((stats.done / stats.target) * 100);
+                return `<option value="${g.id}">${g.title} (${progress}%)</option>`;
+            }).join('');
+            select.value = availableGoals[0].id;
+            renderManualTaskOptions();
         }
 
-        function calculateSchedule() {
-            const today = new Date(); today.setHours(0,0,0,0);
-            let pool = [];
-            // 複製一份深拷貝來模擬排程
-            const tempGoals = JSON.parse(JSON.stringify(state.goals));
-            tempGoals.forEach(g => collectLeaves(g, g.priority, pool));
-            
-            const result = [];
-            let cursor = new Date(today);
-            for (let i = 0; i < 7; i++) {
-                const dStr = cursor.toISOString().split('T')[0];
-                let dayCap = state.dailyMaxHours;
-                
-                // 按優先級與權重分配
-                const active = pool.filter(t => (t.targetHours - t.doneHours) > 0);
-                if (active.length === 0) break;
-
-                const maxP = Math.max(...active.map(t => t.priority));
-                const topP = active.filter(t => t.priority === maxP);
-                
-                topP.forEach(task => {
-                    let needed = task.targetHours - task.doneHours;
-                    let allocated = Math.min(needed, dayCap / topP.length, dayCap);
-                    if (allocated > 0) {
-                        result.push({ date: dStr, taskId: task.id, title: task.title, hours: parseFloat(allocated.toFixed(1)) });
-                        task.doneHours += allocated;
-                        dayCap -= allocated;
-                    }
-                });
-                cursor.setDate(cursor.getDate() + 1);
+        function renderManualTaskOptions() {
+            const goalId = parseInt(document.getElementById('manual-goal-select').value, 10);
+            const goal = state.goals.find(g => g.id === goalId);
+            const taskSelect = document.getElementById('manual-task-select');
+            taskSelect.innerHTML = '';
+            if (!goal) {
+                taskSelect.innerHTML = `<option value="">尚未選擇計畫</option>`;
+                taskSelect.disabled = true;
+                return;
             }
-            return result;
+            const leaves = [];
+            collectIncompleteLeafNodes(goal, leaves);
+            if (leaves.length === 0) {
+                taskSelect.innerHTML = `<option value="">此計畫暫無可核銷的末端子任務</option>`;
+                taskSelect.disabled = true;
+                return;
+            }
+            taskSelect.disabled = false;
+            taskSelect.innerHTML = leaves.map(t => `<option value="${t.id}">${t.title} (${t.doneHours.toFixed(1)} / ${t.targetHours.toFixed(1)}h)</option>`).join('');
         }
 
-        function collectLeaves(node, priority, result) {
-            if (node.completed) return;
-            if (!node.children || node.children.length === 0) {
-                result.push({ ...node, priority });
-            } else {
-                node.children.forEach(c => collectLeaves(c, priority, result));
+        function confirmManualVerification() {
+            const taskId = parseInt(document.getElementById('manual-task-select').value, 10);
+            const hours = parseFloat(document.getElementById('manual-log-hours').value) || 0;
+            if (!taskId) {
+                alert('請選擇末端子任務。');
+                return;
             }
-        }
-
-        // --- 核銷邏輯 (A/B/C/D 狀態) ---
-        function openLogModal(taskId, title, planned) {
             const task = findNode(taskId);
-            activeGoalId = findParentGoal(taskId).id;
-            document.getElementById('log-context').innerText = `${title} | 計畫投入: ${planned}h`;
-            document.getElementById('log-input').value = planned;
-            document.getElementById('log-modal').classList.remove('hidden');
-            
-            document.getElementById('log-confirm-btn').onclick = () => {
-                const actual = parseFloat(document.getElementById('log-input').value) || 0;
-                let logMsg = "";
-                
-                // 狀態判定
-                if (actual === 0) logMsg = `【逾期】今日未投入時間 (原定 ${planned}h)`;
-                else if (actual < planned) logMsg = `【進度落後】投入 ${actual}h (少於規劃 ${planned}h)`;
-                else if (actual === planned) logMsg = `【準時完成】準時投入 ${actual}h`;
-                else logMsg = `【超前達成】超額投入 ${actual}h (原定 ${planned}h)`;
+            const parentGoal = findParentGoal(taskId);
+            if (!task || !parentGoal) {
+                alert('任務選擇錯誤，請重新選擇。');
+                return;
+            }
 
-                task.doneHours += actual;
-                if (task.doneHours >= task.targetHours) {
-                    task.doneHours = task.targetHours;
-                    task.completed = true;
+            const remaining = Math.max(0, (task.targetHours || 0) - (task.doneHours || 0));
+            if (hours > remaining) {
+                const over = parseFloat((hours - remaining).toFixed(1));
+                if (!confirm(`本次核銷會超出此任務剩餘計畫工時 ${remaining.toFixed(1)}h，超出 ${over}h，是否繼續？`)) return;
+                task.isOverrun = true;
+                task.overrunHours = parseFloat(((task.doneHours || 0) + hours - task.targetHours).toFixed(1));
+            }
+
+            let logMsg = `手動核銷任務「${task.title}」：`;
+            if (hours === 0) {
+                logMsg += `今日逾期 (未核銷時數)`;
+            } else {
+                logMsg += `核銷 ${hours}h`;
+            }
+            task.doneHours += hours;
+            if (task.doneHours >= task.targetHours) {
+                task.completed = true;
+                logMsg += ' ➔ 任務正式結案';
+                const parentNode = findParentNode(taskId);
+                if (parentNode) checkAndMarkParentCompleted(parentNode);
+            }
+            if (task.isOverrun) {
+                const overrunAmount = parseFloat((task.doneHours - task.targetHours).toFixed(1));
+                logMsg += ` ➔ 超出計畫工時 ${overrunAmount}h`;
+            }
+
+            state.todayAvailableHours -= hours;
+            task.lastVerifiedDate = getTodayString();
+            addLog(parentGoal.id, logMsg);
+            closeModals();
+            persist();
+        }
+
+        function collectLeafNodes(node, result) {
+            if (!node.children || node.children.length === 0) {
+                result.push(node);
+                return;
+            }
+            node.children.forEach(c => collectLeafNodes(c, result));
+        }
+
+        function collectIncompleteLeafNodes(node, result) {
+            if (!node.children || node.children.length === 0) {
+                const done = node.doneHours || 0;
+                const target = node.targetHours || 0;
+                if (done < target) result.push(node);
+                return;
+            }
+            node.children.forEach(c => collectIncompleteLeafNodes(c, result));
+        }
+
+        function openLogHours(taskId, title, suggested) {
+            const task = findNode(taskId);
+            const parentGoal = findParentGoal(taskId);
+            activeGoalId = parentGoal.id; // 設定 context
+
+            document.getElementById('log-task-title').innerText = `建議核銷: ${suggested}h (來自: ${title})`;
+            document.getElementById('log-hours-input').value = suggested;
+            document.getElementById('log-modal').classList.remove('hidden');
+
+            document.getElementById('log-confirm-btn').onclick = () => {
+                const hours = parseFloat(document.getElementById('log-hours-input').value) || 0;
+                const remaining = Math.max(0, (task.targetHours || 0) - (task.doneHours || 0));
+                if (hours > remaining) {
+                    const over = parseFloat((hours - remaining).toFixed(1));
+                    if (!confirm(`本次核銷會超出此任務剩餘計畫工時 ${remaining.toFixed(1)}h，超出 ${over}h，是否繼續？`)) return;
+                    task.isOverrun = true;
+                    task.overrunHours = parseFloat(((task.doneHours || 0) + hours - task.targetHours).toFixed(1));
                 }
+
+                let logMsg = `核銷任務「${task.title}」：`;
+                const delta = parseFloat((hours - suggested).toFixed(1));
                 
+                if (hours === 0) {
+                    logMsg += `今日逾期 (未核銷時數)`;
+                } else if (hours < suggested) {
+                    logMsg += `今日核銷 ${hours}h (少 ${parseFloat((suggested - hours).toFixed(1))}h)`;
+                } else if (Math.abs(delta) < 0.05) {
+                    logMsg += `今日順利完成 ${hours}h`;
+                } else {
+                    logMsg += `今日超前核銷 ${hours}h (超出規劃 ${delta}h)`;
+                }
+
+                task.doneHours += hours;
+                if (task.doneHours >= task.targetHours) {
+                    task.completed = true;
+                    logMsg += " ➔ 任務正式結案";
+                    const parentNode = findParentNode(taskId);
+                    if (parentNode) checkAndMarkParentCompleted(parentNode);
+                }
+                if (task.isOverrun) {
+                    const overrunAmount = parseFloat((task.doneHours - task.targetHours).toFixed(1));
+                    logMsg += ` ➔ 超出計畫工時 ${overrunAmount}h`;
+                }
+
+                state.todayAvailableHours -= hours;
+                task.lastVerifiedDate = getTodayString();
                 addLog(activeGoalId, logMsg);
                 closeModals();
                 persist();
             };
         }
 
-        // --- 詳情與操作 ---
-        function openDetails(id) {
-            activeGoalId = id;
-            const g = state.goals.find(x => x.id === id);
-            const s = getStats(g);
-            const progress = s.target === 0 ? 0 : Math.round((s.done / s.target) * 100);
-
-            document.getElementById('detail-title').innerText = g.title;
-            document.getElementById('detail-meta').innerHTML = `
-                <span class="status-tag bg-indigo-50 text-indigo-600">P${g.priority}</span>
-                <span class="status-tag bg-slate-100 text-slate-400">權重 ${g.weight}%</span>
-            `;
-
-            document.getElementById('detail-stats').innerHTML = `
-                <div class="bg-slate-50 p-4 rounded-2xl text-center">
-                    <p class="text-[9px] font-black text-slate-400 uppercase mb-1">總預算</p>
-                    <p class="text-lg font-black text-slate-700">${s.target.toFixed(1)}h</p>
-                </div>
-                <div class="bg-indigo-50 p-4 rounded-2xl text-center border border-indigo-100">
-                    <p class="text-[9px] font-black text-indigo-400 uppercase mb-1">已核銷</p>
-                    <p class="text-lg font-black text-indigo-600">${s.done.toFixed(1)}h</p>
-                </div>
-                <div class="bg-slate-50 p-4 rounded-2xl text-center">
-                    <p class="text-[9px] font-black text-slate-400 uppercase mb-1">完成率</p>
-                    <p class="text-lg font-black text-slate-700">${progress}%</p>
-                </div>
-            `;
-
-            const list = document.getElementById('detail-tasks-list');
-            list.innerHTML = '';
-            const leaves = [];
-            getAllLeaves(g, leaves);
-            leaves.forEach(t => {
-                const isDone = t.completed;
-                list.innerHTML += `
-                    <div class="p-4 rounded-2xl border border-slate-100 flex items-center justify-between ${isDone ? 'bg-slate-50 opacity-60' : 'bg-white shadow-sm'}">
-                        <div>
-                            <h5 class="text-sm font-bold ${isDone ? 'line-through text-slate-400' : 'text-slate-800'}">${t.title}</h5>
-                            <div class="flex items-center gap-2 mt-1.5">
-                                <span class="text-[10px] font-black text-slate-400">${t.doneHours.toFixed(1)} / ${t.targetHours.toFixed(1)} h</span>
-                                ${t.isEarly ? '<span class="status-tag bg-emerald-50 text-emerald-600">✨ 超前結案</span>' : ''}
-                                ${t.isExtended ? '<span class="status-tag bg-red-50 text-red-500">⚠️ 已延長</span>' : ''}
-                            </div>
-                        </div>
-                        ${!isDone ? `
-                            <div class="flex gap-1">
-                                <button onclick="markEarly(${t.id})" class="p-2 hover:bg-emerald-50 rounded-lg text-emerald-500 transition" title="超前完成">✨</button>
-                                <button onclick="extendHours(${t.id})" class="p-2 hover:bg-red-50 rounded-lg text-red-400 transition" title="延長工時">➕</button>
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-            });
-
-            const logs = document.getElementById('detail-logs');
-            logs.innerHTML = (g.logs || []).slice().reverse().map(l => `
-                <div class="log-line pb-6">
-                    <p class="text-[13px] font-bold text-slate-700 leading-snug">${l.msg}</p>
-                    <time class="text-[9px] text-slate-400 font-bold mt-1 block uppercase">${l.time}</time>
-                </div>
-            `).join('');
-
-            document.getElementById('detail-modal').classList.remove('hidden');
-        }
-
-        // --- 輔助功能 ---
-        function markEarly(id) {
-            const t = findNode(id);
-            const saved = (t.targetHours - t.doneHours).toFixed(1);
-            if(confirm(`確定超前完成「${t.title}」？這將標註節省了 ${saved}h。`)) {
-                t.isEarly = true;
-                t.doneHours = t.targetHours;
-                t.completed = true;
-                addLog(activeGoalId, `【超前結案】手動完成「${t.title}」，標註節省 ${saved}h`);
+        function markEarly(taskId) {
+            const task = findNode(taskId);
+            const rem = task.targetHours - task.doneHours;
+            if (confirm(`確定超前完成「${task.title}」嗎？\n這將節省剩餘的 ${rem.toFixed(1)} 小時。`)) {
+                task.isEarly = true;
+                task.earlyHours = rem.toFixed(1);
+                task.doneHours = task.targetHours;
+                task.completed = true;
+                addLog(activeGoalId, `超前完成「${task.title}」，縮短工時 ${rem.toFixed(1)}h 並結案`);
+                const parentNode = findParentNode(taskId);
+                if (parentNode) checkAndMarkParentCompleted(parentNode);
                 persist();
-                openDetails(activeGoalId);
             }
         }
 
-        function extendHours(id) {
-            const add = prompt("欲增加多少額外工時？", "1");
+        function extendHours(taskId) {
+            const add = prompt("此任務需延長多少小時？", "1");
             if (add && !isNaN(add)) {
-                const t = findNode(id);
-                t.targetHours += parseFloat(add);
-                t.isExtended = true;
-                addLog(activeGoalId, `【工時延長】因故增加「${t.title}」時數共 ${add}h`);
+                const task = findNode(taskId);
+                const val = parseFloat(add);
+                task.targetHours += val;
+                task.isExtended = true;
+                addLog(activeGoalId, `延長任務「${task.title}」工時：增加 ${val}h`);
                 persist();
-                openDetails(activeGoalId);
             }
         }
 
+        // --- 編輯功能 ---
         function createNewGoal() {
-            const title = prompt("請輸入新目標名稱", "新計畫");
-            if (!title) return;
             const id = ++state.lastId;
             state.goals.push({
-                id, title, priority: 5, weight: 20, 
-                targetHours: 0, doneHours: 0, 
-                completed: false, children: [
-                    { id: ++state.lastId, title: "初始任務", targetHours: 5, doneHours: 0, completed: false }
-                ],
-                logs: [{ time: new Date().toLocaleString(), msg: "🎯 建立了新的目標計畫" }]
+                id, title: "新計畫", priority: 5, weight: 20,
+                deadline: new Date(Date.now() + 86400000*30).toISOString().split('T')[0],
+                targetHours: 0, doneHours: 0, completed: false, children: [], logs: []
             });
+            openEditGoal(id, true);
+        }
+
+        function openEditGoal(id, isNew = false) {
+            activeGoalId = id;
+            isNewGoalEdit = isNew;
+            const g = state.goals.find(x => x.id === id);
+            document.getElementById('edit-goal-title').value = g.title;
+            document.getElementById('edit-goal-priority').value = g.priority;
+            document.getElementById('edit-goal-weight').value = g.weight;
+            document.getElementById('edit-goal-deadline').value = g.deadline;
+
+            // 設置權重輸入的限制
+            const weightInput = document.getElementById('edit-goal-weight');
+            const priorityInput = document.getElementById('edit-goal-priority');
+            const updateWeightMax = () => {
+                const currentPriority = parseInt(priorityInput.value) || 1;
+                const otherGoals = state.goals.filter(goal => goal.id !== g.id);
+                const currentTotal = otherGoals.filter(goal => goal.priority === currentPriority).reduce((s, goal) => s + goal.weight, 0);
+                weightInput.max = 100 - currentTotal;
+            };
+            updateWeightMax();
+            priorityInput.addEventListener('input', updateWeightMax);
+            weightInput.min = 20;
+            weightInput.step = 20;
+
+            renderTree();
+            document.getElementById('edit-modal').classList.remove('hidden');
+        }
+
+        function renderTree() {
+            const goal = state.goals.find(g => g.id === activeGoalId);
+            const container = document.getElementById('tree-root');
+            if (!goal) return;
+            container.innerHTML = generateTreeHTML(goal.children || [], 0);
+        }
+
+        function generateTreeHTML(nodes, depth) {
+            return nodes.map(node => {
+                const isLeaf = !node.children || node.children.length === 0;
+                const showAdd = isNewGoalEdit || node.isLive || (node.children && node.children.length > 0);
+                const editableHours = isNewGoalEdit || node.isLive;
+                return `
+                <div class="ml-${depth * 4} border-l-2 border-slate-100 pl-4 py-2 my-1">
+                    <div class="flex items-center gap-2 group">
+                        <input type="text" value="${node.title}" onchange="updateNodeTitle(${node.id}, this.value)" class="flex-1 bg-transparent text-sm font-medium outline-none border-b border-transparent focus:border-indigo-300">
+                        ${isLeaf ? (editableHours ? `<input type="number" value="${node.targetHours || 0}" onchange="updateNodeHours(${node.id}, this.value)" class="w-12 text-[10px] text-slate-500 font-bold bg-slate-50 px-2 py-1 rounded-lg outline-none focus:bg-white focus:ring-1 ring-indigo-300" step="0.5">` : `<span class="text-[10px] text-slate-500 font-bold bg-slate-50 px-2 py-1 rounded-lg">${node.targetHours || 0}h</span>`) : ''}
+                        ${showAdd ? `<button onclick="addChildNode(${node.id})" class="text-slate-300 hover:text-indigo-500 text-lg font-bold px-1">+</button>` : ''}
+                        <button onclick="deleteNode(${node.id})" class="text-slate-300 hover:text-red-500 text-lg font-bold px-1">×</button>
+                    </div>
+                    ${node.children ? generateTreeHTML(node.children, depth + 1) : ''}
+                </div>
+            `;
+            }).join('');
+        }
+
+        function addRootTask() {
+            const g = state.goals.find(x => x.id === activeGoalId);
+            if (!g) return;
+            const id = ++state.lastId;
+            g.children.push({
+                id, title: "新子任務", targetHours: 1, doneHours: 0,
+                completed: false, children: [], isExtended: false, isEarly: false, earlyHours: 0, isLive: true
+            });
+            renderTree();
+        }
+
+        function updateNodeTitle(id, val) { const n = findNode(id); if (n) n.title = val; }
+
+        function updateNodeHours(id, val) { const n = findNode(id); if (n) n.targetHours = parseFloat(val) || 0; }
+
+        function addChildNode(parentId) {
+            const parent = findNode(parentId);
+            if (parent) {
+                const id = ++state.lastId;
+                parent.children.push({
+                    id, title: "新子任務", targetHours: 1, doneHours: 0,
+                    completed: false, children: [], isExtended: false, isEarly: false, earlyHours: 0, isLive: true
+                });
+                renderTree();
+            }
+        }
+
+        function deleteNode(id) {
+            let deletedTitle = null;
+            const remove = (list) => {
+                const idx = list.findIndex(n => n.id === id);
+                if (idx > -1) {
+                    deletedTitle = list[idx].title;
+                    list.splice(idx, 1);
+                    return true;
+                }
+                for (let n of list) if (n.children && remove(n.children)) return true;
+                return false;
+            };
+            remove(state.goals);
+            if (deletedTitle) addLog(activeGoalId, `刪除子任務「${deletedTitle}」`);
+            renderTree();
+        }
+
+        function adjustWeight(w) {
+            const options = [20, 40, 60, 80, 100];
+            return options.reduce((prev, curr) => Math.abs(curr - w) < Math.abs(prev - w) ? curr : prev);
+        }
+
+        function saveActiveGoal() {
+            const g = state.goals.find(x => x.id === activeGoalId);
+            g.title = document.getElementById('edit-goal-title').value;
+            let priority = parseInt(document.getElementById('edit-goal-priority').value);
+            if (isNaN(priority)) priority = 1;
+            priority = Math.min(5, Math.max(1, priority));
+
+            // 檢查優先級權重上限
+            const otherGoals = state.goals.filter(goal => goal.id !== g.id);
+            const currentTotal = otherGoals.filter(goal => goal.priority === priority).reduce((s, goal) => s + goal.weight, 0);
+            if (currentTotal >= 100) {
+                alert('該優先級權重已滿，無法設定為此優先級。');
+                return;
+            }
+
+            let weight = parseInt(document.getElementById('edit-goal-weight').value);
+            weight = adjustWeight(weight);
+            weight = Math.max(20, Math.min(weight, 100 - currentTotal));
+
+            g.priority = priority;
+            g.weight = weight;
+            g.deadline = document.getElementById('edit-goal-deadline').value;
+            const createdNodes = [];
+            collectLiveNodes(g, createdNodes);
+            createdNodes.forEach(node => {
+                if (node.children && node.children.length > 0) {
+                    addLog(activeGoalId, `新增結點「${node.title}」`);
+                } else {
+                    addLog(activeGoalId, `新增子任務「${node.title}」，原始預計 ${node.targetHours || 0}h`);
+                }
+            });
+            markAllNodesDead(g);
+            isNewGoalEdit = false;
+            closeModals();
             persist();
+        }
+
+        function collectLiveNodes(node, result) {
+            if (!node) return;
+            if (node.isLive) result.push(node);
+            if (node.children) node.children.forEach(c => collectLiveNodes(c, result));
+        }
+
+        function markAllNodesDead(node) {
+            if (!node) return;
+            node.isLive = false;
+            if (node.children) node.children.forEach(markAllNodesDead);
+        }
+
+        // --- 核心工具 ---
+        function getGoalStats(node) {
+            if (!node.children || node.children.length === 0) {
+                // 葉子節點，使用自己的時間
+                return { target: node.targetHours || 0, done: Math.min(node.doneHours || 0, node.targetHours || 0) };
+            } else {
+                // 父節點，只累加子節點的統計，忽略自己的 targetHours 和 doneHours
+                let target = 0;
+                let done = 0;
+                node.children.forEach(c => {
+                    const s = getGoalStats(c);
+                    target += s.target;
+                    done += s.done;
+                });
+                return { target, done };
+            }
+        }
+
+        function getAllLeaves(node, result) {
+            if (!node.children || node.children.length === 0) {
+                if (node.id !== activeGoalId) result.push(node);
+            } else {
+                node.children.forEach(c => getAllLeaves(c, result));
+            }
+        }
+
+        function findNode(id, nodes = state.goals) {
+            for (let n of nodes) {
+                if (n.id === id) return n;
+                if (n.children) { const r = findNode(id, n.children); if (r) return r; }
+            }
+            return null;
+        }
+
+        function findParentGoal(id) {
+            for (let g of state.goals) { if (findNode(id, [g])) return g; }
+            return null;
+        }
+
+        function findParentNode(id) {
+            for (let g of state.goals) {
+                const result = findParentNodeInTree(id, g.children);
+                if (result) return result;
+            }
+            return null;
+        }
+
+        function findParentNodeInTree(id, nodes) {
+            for (let n of nodes) {
+                if (n.children) {
+                    if (n.children.some(c => c.id === id)) return n;
+                    const result = findParentNodeInTree(id, n.children);
+                    if (result) return result;
+                }
+            }
+            return null;
+        }
+
+        function checkAndMarkParentCompleted(node) {
+            if (!node || !node.children || node.children.length === 0) return;
+            const allCompleted = node.children.every(c => c.completed);
+            if (allCompleted && !node.completed) {
+                node.completed = true;
+                const parent = findParentNode(node.id);
+                if (parent) checkAndMarkParentCompleted(parent);
+            }
         }
 
         function addLog(goalId, msg) {
             const g = state.goals.find(x => x.id === goalId);
-            if(!g.logs) g.logs = [];
-            g.logs.push({ time: new Date().toLocaleString(), msg });
+            if (!g) return;
+            if (!g.logs) g.logs = [];
+            g.logs.push({ 
+                time: new Date().toLocaleString('zh-TW', { timeZone: state.timezone }), 
+                msg 
+            });
         }
 
-        function findNode(id, nodes = state.goals) {
-            for (let n of nodes) { if (n.id === id) return n; if (n.children) { const r = findNode(id, n.children); if (r) return r; } }
-            return null;
-        }
-
-        function findParentGoal(id) { for (let g of state.goals) { if (findNode(id, [g])) return g; } return null; }
-
-        function getStats(node) {
-            let target = node.targetHours || 0; let done = node.doneHours || 0;
-            if (node.children) { node.children.forEach(c => { const s = getStats(c); target += s.target; done += s.done; }); }
-            return { target, done };
-        }
-
-        function getAllLeaves(node, res) {
-            if (!node.children || node.children.length === 0) { if(node.id !== activeGoalId) res.push(node); }
-            else { node.children.forEach(c => getAllLeaves(c, res)); }
+        function deleteActiveGoal() {
+            if (!activeGoalId) return;
+            if (confirm("確定要刪除此目標嗎？此動作無法復原。")) {
+                state.goals = state.goals.filter(g => g.id !== activeGoalId);
+                
+                // 刪除後立刻把腳位清空
+                const deletedId = activeGoalId;
+                activeGoalId = null;
+                closeModals();
+                persist();
+            }
         }
 
         function closeModals() {
             document.querySelectorAll('[id$="-modal"]').forEach(m => m.classList.add('hidden'));
+            document.body.style.overflow = 'auto';
         }
+
+        function removeOffDay(date) {
+            state.offDays = state.offDays.filter(d => d !== date);
+            renderOffDayTags();
+        }
+
+        function addOffDay() {
+            const date = document.getElementById('cfg-off-date').value;
+            if (date && !state.offDays.includes(date)) {
+                state.offDays.push(date);
+                renderOffDayTags();
+            }
+        }
+
+        function renderOffDayTags() {
+            const container = document.getElementById('off-days-tags');
+            container.innerHTML = state.offDays.sort().map(d => `
+                <span class="inline-flex items-center gap-1 bg-slate-100 text-slate-600 text-[10px] font-bold px-3 py-1.5 rounded-full border border-slate-200">
+                    ${d} <button onclick="removeOffDay('${d}')" class="text-slate-400 hover:text-slate-600">×</button>
+                </span>
+            `).join('');
+        }
+
+        function saveConfig() {
+            const oldMax = state.dailyMaxHours;// 儲存前的每日上限
+            const newMax = parseFloat(document.getElementById('cfg-daily-hours').value) || 4;// 新的每日上限，預設為 4 小時
+            
+            
+
+            // 如果調大了每日總額，同步補貼今日餘額
+            if (newMax !== oldMax) {
+                const diff = newMax - oldMax;
+                state.todayAvailableHours += diff;
+                state.dailyMaxHours = newMax;
+            }
+
+            state.timezone = document.getElementById('cfg-timezone').value;
+            persist();
+            updateDateDisplay();
+            closeModals();
+        }
+
+        function openConfig() { document.getElementById('config-modal').classList.remove('hidden'); }
+
+        //backup & restore
+        const exportData = () => {
+            // 確保導出的是目前的 state 物件
+            const data = {
+                state: state, 
+                version: "4.0",
+                exportAt: new Date().toISOString()
+            };  
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            
+            a.style.display = 'none'; // 隱藏元素
+            a.href = url;
+            a.download = `task_planner_backup_${new Date().toISOString().split('T')[0]}.json`;
+            
+            document.body.appendChild(a); // 必須加入 body 才能在某些瀏覽器觸發
+            a.click();
+            
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        };
+
+        const importData = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    // 檢查匯入格式（適配你的匯出結構）
+                    if (imported && imported.state) {
+                        if (confirm("匯入將覆蓋現有的所有計畫與紀錄，確定要繼續嗎？")) {
+                            // 更新核心 state 物件
+                            state = imported.state;
+                            
+                            // 同步到 LocalStorage 並重繪 UI
+                            persist(); 
+                            updateDateDisplay();
+                            closeModals();
+                            
+                            alert("匯入成功！");
+                        }
+                    } else {
+                        alert("無效的備份檔案格式。");
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("讀取檔案失敗，請確保這是正確的 JSON 備份檔。");
+                }
+                // 清除 input 數值，讓同一個檔案可以重複觸發匯入
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        };
+
+
+        // 3. UI 導航與彈窗
+        window.renderDetails = renderDetails;
+        window.openConfig = openConfig;
+        window.closeModals = closeModals;
+
+        // 4. 資料處理
+        window.exportData = exportData;
+        window.importData = importData;
+
+        // 5. 核心工具
+        window.parseDateString = parseDateString;
+        window.updateDetailTreeScale = updateDetailTreeScale;
+        window.toggleDetailTreeMode = toggleDetailTreeMode;
+        window.generateHorizontalTreeHTML = generateHorizontalTreeHTML;
+        window.renderDetailTaskTree = renderDetailTaskTree;
+        window.generateDetailTreeHTML = generateDetailTreeHTML;
+        window.manualTaskVerification = manualTaskVerification;
+        window.renderManualGoalOptions = renderManualGoalOptions;
+        window.renderManualTaskOptions = renderManualTaskOptions;
+        window.confirmManualVerification = confirmManualVerification;
+        window.collectLeafNodes = collectLeafNodes;
+        window.collectIncompleteLeafNodes = collectIncompleteLeafNodes;
+        window.openLogHours = openLogHours;
+        window.markEarly = markEarly;
+        window.extendHours = extendHours;
+        window.createNewGoal = createNewGoal;
+        window.openEditGoal = openEditGoal;
+        window.renderTree = renderTree;
+        window.generateTreeHTML = generateTreeHTML;
+        window.addRootTask = addRootTask;
+        window.updateNodeTitle = updateNodeTitle;
+        window.updateNodeHours = updateNodeHours;
+        window.addChildNode = addChildNode;
+        window.deleteNode = deleteNode;
+        window.adjustWeight = adjustWeight;
+        window.saveActiveGoal = saveActiveGoal;
+        window.collectLiveNodes = collectLiveNodes;
+        window.markAllNodesDead = markAllNodesDead;
+        window.getGoalStats = getGoalStats;
+        window.getAllLeaves = getAllLeaves;
+        window.findNode = findNode;
+        window.findParentGoal = findParentGoal;
+        window.findParentNode = findParentNode;
+        window.findParentNodeInTree = findParentNodeInTree;
+        window.checkAndMarkParentCompleted = checkAndMarkParentCompleted;
+        window.addLog = addLog;
+        window.deleteActiveGoal = deleteActiveGoal;
+        window.closeModals = closeModals;
+        window.removeOffDay = removeOffDay;
+        window.addOffDay = addOffDay;
+        window.renderOffDayTags = renderOffDayTags;
+        window.saveConfig = saveConfig;
+        window.openConfig = openConfig;
+        window.exportData = exportData;
+        window.importData = importData;
+        window.openDetails =openDetails;
     </script>
 </body>
 </html>
